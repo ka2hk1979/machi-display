@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>まち紹介ディスプレイ</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="まち紹介">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
+<style>
+  /* 画面構成: 上=ステータス行(GPS状態) / 中央=ドット文字の表示パネル / 下=操作ボタン */
+  :root {
+    --bg: #000000;
+    --panel: #0a0b0e;
+    --ink: #eef3ff;
+    --dim: #7d8696;
+    --ok: #7dffa6;
+    --warn: #ffcf5a;
+    --font: "DotGothic16", "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); }
+  body {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: max(14px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    overflow: hidden; user-select: none; -webkit-user-select: none;
+  }
+  #status {
+    display: flex; flex-wrap: wrap; gap: 4px 14px;
+    font-size: 15px; letter-spacing: .04em; color: var(--dim);
+  }
+  #status b { font-weight: normal; color: var(--ink); }
+  #status .ok { color: var(--ok); }
+  #status .warn { color: var(--warn); }
+  #panel {
+    flex: 1; min-height: 0; border-radius: 6px; background: var(--panel);
+    border: 1px solid #1b1e26; padding: 14px 16px; position: relative; overflow: hidden;
+  }
+  #screen {
+    width: 100%; height: 100%; overflow: hidden; line-height: 1.28; letter-spacing: 0;
+    white-space: pre-wrap; word-break: break-all; color: var(--ink);
+    text-shadow: 0 0 6px rgba(190, 210, 255, .35);
+  }
+  #screen.title { color: #fff; }
+  #screen.eki { color: var(--ok); text-shadow: 0 0 6px rgba(125, 255, 166, .35); }
+  #pager { position: absolute; right: 12px; bottom: 8px; font-size: 13px; color: var(--dim); }
+  #bar { display: flex; gap: 10px; }
+  #bar button {
+    flex: 1; font: inherit; font-size: 17px; color: var(--ink); background: #11141a;
+    border: 1px solid #262b36; border-radius: 6px; padding: 14px 6px; min-height: 52px;
+  }
+  #bar button:active { background: #1c212b; }
+  #bar button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+
+  #intro {
+    position: fixed; inset: 0; background: var(--bg); z-index: 5;
+    display: flex; flex-direction: column; justify-content: center; gap: 18px;
+    padding: max(24px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
+  }
+  #intro h1 { margin: 0; font-weight: normal; font-size: 34px; line-height: 1.3; text-wrap: balance; }
+  #intro p { margin: 0; color: var(--dim); font-size: 16px; line-height: 1.7; max-width: 30em; }
+  #intro .btns { display: flex; flex-direction: column; gap: 12px; max-width: 360px; }
+  #intro button {
+    font: inherit; font-size: 20px; padding: 16px; border-radius: 6px; border: 1px solid #2d3340;
+    background: #11141a; color: var(--ink);
+  }
+  #intro button.main { background: var(--ink); color: #000; border-color: var(--ink); }
+  #intro button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="status" aria-live="polite">
+  <span>GPS:<b id="st-gps">--</b></span>
+  <span>精度:<b id="st-acc">--</b></span>
+  <span>向き:<b id="st-dir">--</b></span>
+  <span>NET:<b id="st-net">--</b></span>
+</div>
+
+<div id="panel">
+  <div id="screen" class="title">GPSを待っています…</div>
+  <div id="pager"></div>
+</div>
+
+<div id="bar">
+  <button id="b-prev" aria-label="前のページ">◀</button>
+  <button id="b-play" aria-label="一時停止">❚❚</button>
+  <button id="b-next" aria-label="次のページ">▶</button>
+  <button id="b-speed" aria-label="表示速度">5秒</button>
+</div>
+
+<div id="intro">
+  <h1>町に入ると、<br>その町の紹介が流れます。</h1>
+  <p>GPSで今いる市町村を調べて、Wikipediaの紹介文をドット文字で表示します。進行方向の10km以内に道の駅があれば「この先 約4km」と緑の文字で知らせます。ダッシュボードに置いて、画面を点けたまま使ってください。</p>
+  <div class="btns">
+    <button class="main" id="go-gps">スタート(GPS)</button>
+    <button id="go-demo">デモを見る</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const screenEl = $("screen"), panelEl = $("panel");
+  const S = {
+    pages: [], idx: 0, paused: false, interval: 5000, timer: null,
+    town: null, lastGeo: null, watchId: null, demoIdx: -1, wake: null, loading: false,
+    fullText: "", head: "",
+    trail: [], heading: null,
+    eki: [], ekiFetch: null, ekiBusy: false, ekiRetryAt: 0, ekiMsg: "", ekiLevels: {}
+  };
+  const EKI_RANGE = 10000;              /* この先何mまで案内するか */
+  const EKI_LEVELS = [10000, 5000, 2000, 1000, 500]; /* この距離を切るたびに先頭ページで知らせる */
+  const DEMO = [
+    ["宮古市", "岩手県"], ["鎌倉市", "神奈川県"], ["倉敷市", "岡山県"], ["別府市", "大分県"], ["伊達市", "北海道"]
+  ];
+  const SPEEDS = [3000, 5000, 8000];
+
+  /* ---------- ステータス表示 ---------- */
+  function setStatus(id, text, cls) {
+    const el = $(id); el.textContent = text; el.className = cls || "";
+  }
+  function netState() { setStatus("st-net", navigator.onLine ? "ON" : "OFF", navigator.onLine ? "ok" : "warn"); }
+  addEventListener("online", netState); addEventListener("offline", netState); netState();
+
+  /* ---------- 表示とページ送り ---------- */
+  function layout() {
+    const w = screenEl.clientWidth, h = screenEl.clientHeight;
+    const landscape = w > h * 1.2;
+    const cols = landscape ? 14 : 9, lines = landscape ? 3 : 6;
+    const fs = Math.max(14, Math.floor(Math.min(w / cols, h / (lines * 1.28))));
+    screenEl.style.fontSize = fs + "px";
+    return { cols, lines };
+  }
+  function paginate(text, size) {
+    const out = []; let rest = text.trim();
+    while (rest.length) {
+      if (rest.length <= size) { out.push(rest); break; }
+      let cut = size;
+      const win = rest.slice(0, size);
+      let p = Math.max(win.lastIndexOf("。"), win.lastIndexOf("！"), win.lastIndexOf("？"));
+      if (p < size * 0.5) p = Math.max(win.lastIndexOf("、"), p);
+      if (p >= size * 0.5) cut = p + 1;
+      out.push(rest.slice(0, cut).trim());
+      rest = rest.slice(cut).trim();
+    }
+    return out;
+  }
+  /* ページ構成: 町名 → 道の駅案内 → 紹介文(3ページごとに道の駅案内を挟む)。
+     道の駅案内は前方に道の駅があるときだけ表示される */
+  function build() {
+    const { cols, lines } = layout();
+    const body = S.fullText ? paginate(S.fullText, cols * lines) : [];
+    const pages = [];
+    if (S.head) pages.push({ t: S.head, title: true });
+    pages.push({ eki: true });
+    body.forEach((t, i) => {
+      pages.push({ t });
+      if ((i + 1) % 3 === 0 && i + 1 < body.length) pages.push({ eki: true });
+    });
+    S.pages = pages;
+    if (S.idx >= pages.length) S.idx = 0;
+  }
+  const visible = (p) => !p.eki || !!S.ekiMsg;
+  function step(delta) {
+    const n = S.pages.length; if (!n) return;
+    let i = S.idx;
+    for (let k = 0; k < n; k++) { i = (i + delta + n) % n; if (visible(S.pages[i])) break; }
+    S.idx = i;
+  }
+  function render() {
+    if (!S.pages.length) return;
+    if (!visible(S.pages[S.idx])) step(1);
+    const p = S.pages[S.idx];
+    screenEl.textContent = p.eki ? S.ekiMsg : p.t;
+    screenEl.className = p.eki ? "eki" : (p.title ? "title" : "");
+    const vis = S.pages.filter(visible);
+    $("pager").textContent = (vis.indexOf(p) + 1) + "/" + vis.length;
+  }
+  function go(delta) {
+    if (!S.pages.length) return;
+    step(delta); render(); restartTimer();
+  }
+  function restartTimer() {
+    clearInterval(S.timer);
+    if (S.paused) return;
+    S.timer = setInterval(() => {
+      if (S.pages.length > 1) { step(1); render(); }
+    }, S.interval);
+  }
+  function jumpToEki() {
+    const i = S.pages.findIndex((p) => p.eki);
+    if (i < 0) return;
+    S.idx = i; render(); restartTimer();
+  }
+  function showMessage(t) {
+    S.pages = [{ t, title: true }]; S.idx = 0; S.fullText = ""; S.head = ""; render();
+  }
+
+  /* ---------- 位置 → 市町村 ---------- */
+  function dist(a, b) {
+    const R = 6371000, r = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+    const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(x));
+  }
+  function bearing(a, b) {
+    const r = Math.PI / 180, y = Math.sin((b.lon - a.lon) * r) * Math.cos(b.lat * r);
+    const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lon - a.lon) * r);
+    return (Math.atan2(y, x) / r + 360) % 360;
+  }
+  const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  const COMPASS = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
+
+  /* 進行方向: 走行中はGPSの方位、取れないときは直近の移動から求める。停車中は直前の向きを保つ */
+  function updateHeading(c, here) {
+    const last = S.trail[S.trail.length - 1];
+    if (!last || dist(last, here) >= 15) { S.trail.push(here); if (S.trail.length > 10) S.trail.shift(); }
+    if (c.heading != null && !isNaN(c.heading) && c.speed != null && c.speed > 1.5) { S.heading = c.heading; }
+    else {
+      const from = S.trail.find((p) => dist(p, here) >= 40);
+      if (from) S.heading = bearing(from, here);
+    }
+    setStatus("st-dir", S.heading == null ? "--" : COMPASS[Math.round(S.heading / 45) % 8]);
+  }
+
+  /* ---------- 道の駅(OpenStreetMapのデータ) ---------- */
+  async function loadEki(here) {
+    if (S.ekiBusy || Date.now() < S.ekiRetryAt) return;
+    if (S.ekiFetch && dist(S.ekiFetch, here) < 8000) return;
+    S.ekiBusy = true;
+    const q = '[out:json][timeout:20];nwr["name"~"^道の駅"](around:20000,' + here.lat + "," + here.lon + ");out center tags;";
+    const hosts = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+    let data = null;
+    for (const h of hosts) {
+      try {
+        const r = await fetch(h + "?data=" + encodeURIComponent(q));
+        if (r.ok) { data = await r.json(); break; }
+      } catch (e) { /* 次のサーバーへ */ }
+    }
+    S.ekiBusy = false;
+    if (!data) { S.ekiRetryAt = Date.now() + 30000; return; }
+    const byName = new Map();
+    for (const el of data.elements || []) {
+      const name = el.tags && el.tags.name; if (!name) continue;
+      const pt = el.center ? { lat: el.center.lat, lon: el.center.lon } : (el.lat != null ? { lat: el.lat, lon: el.lon } : null);
+      if (!pt) continue;
+      const prev = byName.get(name);
+      if (!prev || dist(here, pt) < dist(here, prev)) byName.set(name, { name, ...pt });
+    }
+    S.eki = [...byName.values()];
+    S.ekiFetch = { lat: here.lat, lon: here.lon };
+  }
+  function fmtDist(d) {
+    if (d < 1000) return "約" + Math.max(100, Math.round(d / 100) * 100) + "m";
+    if (d < 10000) return "約" + (Math.round(d / 100) / 10) + "km";
+    return "約" + Math.round(d / 1000) + "km";
+  }
+  /* 進行方向の左右35度以内で、いちばん近い道の駅を案内する */
+  function checkEki(here) {
+    if (S.heading == null || !S.eki.length) return;
+    let best = null;
+    for (const s of S.eki) {
+      const d = dist(here, s);
+      if (d > EKI_RANGE) continue;
+      const limit = d < 300 ? 60 : 35;
+      if (angDiff(bearing(here, s), S.heading) > limit) continue;
+      if (!best || d < best.d) best = { s, d };
+    }
+    if (!best) { S.ekiMsg = ""; return; }
+    S.ekiMsg = best.d < 300 ? "まもなく\n" + best.s.name : "この先 " + fmtDist(best.d) + "\n" + best.s.name;
+    const lv = EKI_LEVELS.filter((t) => best.d <= t).length;
+    if (lv > (S.ekiLevels[best.s.name] || 0)) {
+      S.ekiLevels[best.s.name] = lv;
+      jumpToEki();
+    } else if (S.pages[S.idx] && S.pages[S.idx].eki) {
+      render();
+    }
+  }
+
+  async function reverse(lat, lon) {
+    const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=ja&lat=" + lat + "&lon=" + lon;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("geocode " + r.status);
+    const j = await r.json(); const a = j.address || {};
+    const name = a.city || a.town || a.village || a.municipality || a.city_district || a.county;
+    const pref = a.state || a.province || a.region || "";
+    return name ? { name, pref } : null;
+  }
+  function onPos(pos) {
+    const c = pos.coords, here = { lat: c.latitude, lon: c.longitude };
+    setStatus("st-gps", "OK", "ok");
+    setStatus("st-acc", Math.round(c.accuracy) + "m", c.accuracy > 100 ? "warn" : "");
+    updateHeading(c, here);
+    loadEki(here).then(() => checkEki(here));
+    checkEki(here);
+    const now = Date.now();
+    const moved =!S.lastGeo || dist(S.lastGeo, here) > 250;
+    const waited = !S.lastGeo || now - S.lastGeo.t > 12000;
+    if (moved && waited && !S.loading) {
+      S.lastGeo = { ...here, t: now };
+      reverse(here.lat, here.lon).then((t) => { if (t) enterTown(t.name, t.pref); }).catch(() => {
+        S.lastGeo.t = 0; setStatus("st-net", "ERR", "warn");
+      });
+    }
+  }
+  function onErr(e) {
+    setStatus("st-gps", e.code === 1 ? "許可なし" : "探索中", "warn");
+    if (e.code === 1) showMessage("位置情報が許可されていません。設定アプリでSafariまたはこのアプリの位置情報を許可してください。");
+  }
+
+  /* ---------- Wikipedia ---------- */
+  async function summary(title) {
+    const r = await fetch("https://ja.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(title.replace(/ /g, "_")) + "?redirect=true");
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.type === "disambiguation" ? null : j;
+  }
+  async function fetchIntro(name, pref) {
+    const tries = [name, name + " (" + pref + ")", pref + name];
+    for (const t of tries) {
+      try {
+        const j = await summary(t);
+        if (j && j.extract && j.extract.length > 30) return j.extract;
+      } catch (e) { /* 次の候補へ */ }
+    }
+    return null;
+  }
+  function clean(t) {
+    return t.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").replace(/\[[^\]]*\]/g, "").replace(/\s+/g, "").trim();
+  }
+  async function enterTown(name, pref) {
+    const key = pref + name;
+    if (S.town === key) return;
+    S.loading = true; S.town = key;
+    S.head = ""; S.fullText = "";
+    showMessage(name + "\nを調べています…");
+    const text = await fetchIntro(name, pref);
+    S.loading = false;
+    S.head = pref + "\n" + name + "\nに入りました";
+    S.fullText = text ? clean(text) : "この町の紹介文は見つかりませんでした。";
+    S.idx = 0; build(); render(); restartTimer();
+  }
+
+  /* ---------- 画面を点けたままにする ---------- */
+  async function keepAwake() {
+    try { if ("wakeLock" in navigator) S.wake = await navigator.wakeLock.request("screen"); } catch (e) { /* 非対応でも続行 */ }
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.wake !== null) keepAwake(); });
+
+  /* ---------- 開始 ---------- */
+  function startGps() {
+    $("intro").hidden = true; keepAwake();
+    if (!navigator.geolocation) { setStatus("st-gps", "非対応", "warn"); showMessage("このブラウザは位置情報に対応していません。"); return; }
+    setStatus("st-gps", "探索中", "warn"); showMessage("GPSを\n待っています…");
+    S.watchId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+  }
+  function nextDemo() {
+    S.demoIdx = (S.demoIdx + 1) % DEMO.length;
+    const [n, p] = DEMO[S.demoIdx]; S.town = null;
+    S.ekiMsg = "この先 約4.2km\n道の駅 ○○(デモ表示)";
+    setStatus("st-gps", "DEMO", "warn"); setStatus("st-acc", "--");
+    enterTown(n, p);
+  }
+  $("go-gps").onclick = startGps;
+  $("go-demo").onclick = () => { $("intro").hidden = true; keepAwake(); nextDemo(); };
+
+  $("b-prev").onclick = () => go(-1);
+  $("b-next").onclick = () => go(1);
+  $("b-play").onclick = () => {
+    S.paused = !S.paused; $("b-play").textContent = S.paused ? "▶▶" : "❚❚";
+    $("b-play").setAttribute("aria-label", S.paused ? "再開" : "一時停止"); restartTimer();
+  };
+  $("b-speed").onclick = () => {
+    const i = (SPEEDS.indexOf(S.interval) + 1) % SPEEDS.length;
+    S.interval = SPEEDS[i]; $("b-speed").textContent = (S.interval / 1000) + "秒"; restartTimer();
+  };
+  /* 画面タップで次のページ。長押しでデモの町に切り替え(GPS不要で動作確認できます) */
+  let pressTimer = null, longPressed = false;
+  panelEl.addEventListener("pointerdown", () => {
+    longPressed = false;
+    pressTimer = setTimeout(() => { longPressed = true; nextDemo(); }, 900);
+  });
+  const endPress = () => clearTimeout(pressTimer);
+  panelEl.addEventListener("pointerup", endPress);
+  panelEl.addEventListener("pointercancel", endPress);
+  panelEl.addEventListener("click", () => { if (!longPressed) go(1); longPressed = false; });
+
+  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (S.fullText) { build(); render(); } }, 200); });
+  layout();
+})();
+</script>
+</body>
+</html>
