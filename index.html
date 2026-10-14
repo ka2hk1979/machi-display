@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
 <style>
-  /* 画面構成: 上=ステータス行(GPS状態) / 中央=ドット文字の表示パネル / 下=操作ボタン */
+  /* 画面構成: 上=ステータス行(GPS状態) / 中央=カテゴリ名+ドット文字のカード / 下=操作ボタン */
   :root {
     --bg: #000000;
     --panel: #0a0b0e;
@@ -42,16 +42,20 @@
   #status .warn { color: var(--warn); }
   #panel {
     flex: 1; min-height: 0; border-radius: 6px; background: var(--panel);
-    border: 1px solid #1b1e26; padding: 14px 16px; position: relative; overflow: hidden;
+    border: 1px solid #1b1e26; padding: 12px 16px 22px; position: relative; overflow: hidden;
+    display: flex; flex-direction: column; gap: 8px;
   }
+  #tag { font-size: 16px; letter-spacing: .12em; color: var(--warn); min-height: 1.3em; }
+  #tag.eki { color: var(--ok); }
+  #tag.title { color: var(--dim); }
   #screen {
-    width: 100%; height: 100%; overflow: hidden; line-height: 1.28; letter-spacing: 0;
+    flex: 1; min-height: 0; overflow: hidden; line-height: 1.28; letter-spacing: 0;
     white-space: pre-wrap; word-break: break-all; color: var(--ink);
     text-shadow: 0 0 6px rgba(190, 210, 255, .35);
   }
   #screen.title { color: #fff; }
   #screen.eki { color: var(--ok); text-shadow: 0 0 6px rgba(125, 255, 166, .35); }
-  #pager { position: absolute; right: 12px; bottom: 8px; font-size: 13px; color: var(--dim); }
+  #pager { position: absolute; right: 12px; bottom: 6px; font-size: 13px; color: var(--dim); }
   #bar { display: flex; gap: 10px; }
   #bar button {
     flex: 1; font: inherit; font-size: 17px; color: var(--ink); background: #11141a;
@@ -87,6 +91,7 @@
 </div>
 
 <div id="panel">
+  <div id="tag" class="title"></div>
   <div id="screen" class="title">GPSを待っています…</div>
   <div id="pager"></div>
 </div>
@@ -100,7 +105,7 @@
 
 <div id="intro">
   <h1>町に入ると、<br>その町の紹介が流れます。</h1>
-  <p>GPSで今いる市町村を調べて、Wikipediaの紹介文をドット文字で表示します。進行方向の10km以内に道の駅があれば「この先 約4km」と緑の文字で知らせます。ダッシュボードに置いて、画面を点けたまま使ってください。</p>
+  <p>GPSで今いる市町村を調べて、町の特徴・数字・ゆかりの人物・地形や気候・味と道の駅・道路の話を、短いカードで順番に表示します。進行方向の10km以内に道の駅があれば、緑の文字で知らせます。</p>
   <div class="btns">
     <button class="main" id="go-gps">スタート(GPS)</button>
     <button id="go-demo">デモを見る</button>
@@ -110,16 +115,16 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const screenEl = $("screen"), panelEl = $("panel");
+  const screenEl = $("screen"), tagEl = $("tag"), panelEl = $("panel");
   const S = {
     pages: [], idx: 0, paused: false, interval: 5000, timer: null,
     town: null, lastGeo: null, watchId: null, demoIdx: -1, wake: null, loading: false,
-    fullText: "", head: "",
+    head: "", cat: null, cards: [], pos: null,
     trail: [], heading: null,
     eki: [], ekiFetch: null, ekiBusy: false, ekiRetryAt: 0, ekiMsg: "", ekiLevels: {}
   };
-  const EKI_RANGE = 10000;              /* この先何mまで案内するか */
-  const EKI_LEVELS = [10000, 5000, 2000, 1000, 500]; /* この距離を切るたびに先頭ページで知らせる */
+  const EKI_RANGE = 10000;                            /* この先何mまで案内するか */
+  const EKI_LEVELS = [10000, 5000, 2000, 1000, 500];  /* この距離を切るたびに先頭ページで知らせる */
   const DEMO = [
     ["宮古市", "岩手県"], ["鎌倉市", "神奈川県"], ["倉敷市", "岡山県"], ["別府市", "大分県"], ["伊達市", "北海道"]
   ];
@@ -132,40 +137,29 @@
   function netState() { setStatus("st-net", navigator.onLine ? "ON" : "OFF", navigator.onLine ? "ok" : "warn"); }
   addEventListener("online", netState); addEventListener("offline", netState); netState();
 
-  /* ---------- 表示とページ送り ---------- */
-  function layout() {
+  /* ---------- 表示: カードごとに文字の大きさを自動調整 ---------- */
+  function linesNeeded(text, cols) {
+    return text.split("\n").reduce((n, ln) => n + Math.max(1, Math.ceil(ln.length / cols)), 0);
+  }
+  function fit(text) {
     const w = screenEl.clientWidth, h = screenEl.clientHeight;
-    const landscape = w > h * 1.2;
-    const cols = landscape ? 14 : 9, lines = landscape ? 3 : 6;
-    const fs = Math.max(14, Math.floor(Math.min(w / cols, h / (lines * 1.28))));
-    screenEl.style.fontSize = fs + "px";
-    return { cols, lines };
-  }
-  function paginate(text, size) {
-    const out = []; let rest = text.trim();
-    while (rest.length) {
-      if (rest.length <= size) { out.push(rest); break; }
-      let cut = size;
-      const win = rest.slice(0, size);
-      let p = Math.max(win.lastIndexOf("。"), win.lastIndexOf("！"), win.lastIndexOf("？"));
-      if (p < size * 0.5) p = Math.max(win.lastIndexOf("、"), p);
-      if (p >= size * 0.5) cut = p + 1;
-      out.push(rest.slice(0, cut).trim());
-      rest = rest.slice(cut).trim();
+    for (let fs = Math.min(64, Math.floor(w / 5)); fs >= 16; fs -= 2) {
+      const cols = Math.max(1, Math.floor(w / fs)), lines = Math.floor(h / (fs * 1.28));
+      if (linesNeeded(text, cols) * 1.06 <= lines) return fs;
     }
-    return out;
+    return 16;
   }
-  /* ページ構成: 町名 → 道の駅案内 → 紹介文(3ページごとに道の駅案内を挟む)。
+
+  /* ページ構成: 町名 → 道の駅案内 → カード(3枚ごとに道の駅案内を挟む)。
      道の駅案内は前方に道の駅があるときだけ表示される */
   function build() {
-    const { cols, lines } = layout();
-    const body = S.fullText ? paginate(S.fullText, cols * lines) : [];
+    if (!S.cards.length && !S.head) return;
     const pages = [];
     if (S.head) pages.push({ t: S.head, title: true });
     pages.push({ eki: true });
-    body.forEach((t, i) => {
-      pages.push({ t });
-      if ((i + 1) % 3 === 0 && i + 1 < body.length) pages.push({ eki: true });
+    S.cards.forEach((c, i) => {
+      pages.push(c);
+      if ((i + 1) % 3 === 0 && i + 1 < S.cards.length) pages.push({ eki: true });
     });
     S.pages = pages;
     if (S.idx >= pages.length) S.idx = 0;
@@ -177,33 +171,42 @@
     for (let k = 0; k < n; k++) { i = (i + delta + n) % n; if (visible(S.pages[i])) break; }
     S.idx = i;
   }
+  function pageText(p) { return p.eki ? S.ekiMsg : p.t; }
   function render() {
     if (!S.pages.length) return;
     if (!visible(S.pages[S.idx])) step(1);
-    const p = S.pages[S.idx];
-    screenEl.textContent = p.eki ? S.ekiMsg : p.t;
-    screenEl.className = p.eki ? "eki" : (p.title ? "title" : "");
+    const p = S.pages[S.idx], text = pageText(p);
+    const kind = p.eki ? "eki" : (p.title ? "title" : "");
+    tagEl.textContent = p.eki ? "【道の駅】" : (p.tag ? "【" + p.tag + "】" : "");
+    tagEl.className = kind;
+    screenEl.className = kind;
+    screenEl.textContent = text;
+    screenEl.style.fontSize = fit(text) + "px";
     const vis = S.pages.filter(visible);
     $("pager").textContent = (vis.indexOf(p) + 1) + "/" + vis.length;
   }
   function go(delta) {
     if (!S.pages.length) return;
-    step(delta); render(); restartTimer();
+    step(delta); render(); schedule();
   }
-  function restartTimer() {
-    clearInterval(S.timer);
-    if (S.paused) return;
-    S.timer = setInterval(() => {
+  /* 文字数が多いカードは少し長めに表示する */
+  function schedule() {
+    clearTimeout(S.timer);
+    if (S.paused || !S.pages.length) return;
+    const text = pageText(S.pages[S.idx]) || "";
+    const delay = S.interval * Math.min(1.6, Math.max(0.7, text.length / 70));
+    S.timer = setTimeout(() => {
       if (S.pages.length > 1) { step(1); render(); }
-    }, S.interval);
+      schedule();
+    }, delay);
   }
   function jumpToEki() {
     const i = S.pages.findIndex((p) => p.eki);
     if (i < 0) return;
-    S.idx = i; render(); restartTimer();
+    S.idx = i; render(); schedule();
   }
   function showMessage(t) {
-    S.pages = [{ t, title: true }]; S.idx = 0; S.fullText = ""; S.head = ""; render();
+    S.pages = [{ t, title: true }]; S.idx = 0; S.head = ""; S.cards = []; S.cat = null; render(); schedule();
   }
 
   /* ---------- 位置 → 市町村 ---------- */
@@ -259,6 +262,7 @@
     }
     S.eki = [...byName.values()];
     S.ekiFetch = { lat: here.lat, lon: here.lon };
+    if (S.cat) { assemble(); build(); }   /* 最寄りの道の駅カードを反映 */
   }
   function fmtDist(d) {
     if (d < 1000) return "約" + Math.max(100, Math.round(d / 100) * 100) + "m";
@@ -286,6 +290,13 @@
       render();
     }
   }
+  function nearestEkiCard() {
+    if (!S.pos || !S.eki.length) return [];
+    let best = null;
+    for (const s of S.eki) { const d = dist(S.pos, s); if (!best || d < best.d) best = { s, d }; }
+    if (!best || best.d > 20000) return [];
+    return [{ tag: "道の駅", t: "いちばん近い道の駅は「" + best.s.name + "」。ここから" + fmtDist(best.d) + "のところです。休憩や地元の味のチェックにどうぞ。" }];
+  }
 
   async function reverse(lat, lon) {
     const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=ja&lat=" + lat + "&lon=" + lon;
@@ -298,13 +309,14 @@
   }
   function onPos(pos) {
     const c = pos.coords, here = { lat: c.latitude, lon: c.longitude };
+    S.pos = here;
     setStatus("st-gps", "OK", "ok");
     setStatus("st-acc", Math.round(c.accuracy) + "m", c.accuracy > 100 ? "warn" : "");
     updateHeading(c, here);
     loadEki(here).then(() => checkEki(here));
     checkEki(here);
     const now = Date.now();
-    const moved =!S.lastGeo || dist(S.lastGeo, here) > 250;
+    const moved = !S.lastGeo || dist(S.lastGeo, here) > 250;
     const waited = !S.lastGeo || now - S.lastGeo.t > 12000;
     if (moved && waited && !S.loading) {
       S.lastGeo = { ...here, t: now };
@@ -318,37 +330,139 @@
     if (e.code === 1) showMessage("位置情報が許可されていません。設定アプリでSafariまたはこのアプリの位置情報を許可してください。");
   }
 
-  /* ---------- Wikipedia ---------- */
-  async function summary(title) {
-    const r = await fetch("https://ja.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(title.replace(/ /g, "_")) + "?redirect=true");
-    if (!r.ok) return null;
-    const j = await r.json();
-    return j.type === "disambiguation" ? null : j;
+  /* ---------- 文章の整形 ---------- */
+  function clean(t) {
+    return t.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").replace(/\[[^\]]*\]/g, "").replace(/\s+/g, "").trim();
   }
-  async function fetchIntro(name, pref) {
-    const tries = [name, name + " (" + pref + ")", pref + name];
-    for (const t of tries) {
-      try {
-        const j = await summary(t);
-        if (j && j.extract && j.extract.length > 30) return j.extract;
-      } catch (e) { /* 次の候補へ */ }
+  function sents(lines) {
+    return (lines.join("").match(/[^。]+。/g) || []).map(clean).filter((s) => s.length >= 12);
+  }
+  /* 文をまとめて50〜100字ほどのカードにする */
+  function makeCards(ss, o) {
+    const out = []; let buf = "";
+    for (let s of ss) {
+      if (s.length > 100) {
+        const k = s.lastIndexOf("、", 96);
+        s = (k > 30 ? s.slice(0, k) : s.slice(0, 96)) + "…";
+      }
+      if (buf && (buf + s).length > 100) { out.push(buf); buf = ""; if (out.length >= o.limit) break; }
+      buf += s;
+      if (buf.length >= 50) { out.push(buf); buf = ""; if (out.length >= o.limit) break; }
+    }
+    if (buf && out.length < o.limit && buf.length >= 20) out.push(buf);
+    return out.slice(0, o.limit).map((t) => ({ tag: o.tag, t }));
+  }
+
+  /* ---------- Wikipedia: 章ごとに分けて6カテゴリのカードにする ---------- */
+  async function wikiPage(title) {
+    const url = "https://ja.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&prop=extracts|pageprops&explaintext=1&ppprop=wikibase_item|disambiguation&titles=" + encodeURIComponent(title);
+    const r = await fetch(url); if (!r.ok) return null;
+    const j = await r.json(); const pages = j.query && j.query.pages; if (!pages) return null;
+    const p = Object.values(pages)[0];
+    if (!p || p.missing !== undefined || !p.extract || p.extract.length < 100) return null;
+    if (p.pageprops && p.pageprops.disambiguation !== undefined) return null;
+    return { text: p.extract, qid: p.pageprops && p.pageprops.wikibase_item };
+  }
+  async function fetchTown(name, pref) {
+    for (const t of [name, name + " (" + pref + ")", pref + name]) {
+      try { const p = await wikiPage(t); if (p) return p; } catch (e) { /* 次の候補へ */ }
     }
     return null;
   }
-  function clean(t) {
-    return t.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").replace(/\[[^\]]*\]/g, "").replace(/\s+/g, "").trim();
+  function parseWiki(text) {
+    let cur = { name: "", level: 1, lines: [] }; const secs = [cur];
+    for (const ln of text.split("\n")) {
+      const m = ln.match(/^(={2,})\s*(.+?)\s*\1\s*$/);
+      if (m) { cur = { name: m[2], level: m[1].length, lines: [] }; secs.push(cur); }
+      else if (ln.trim()) cur.lines.push(ln.trim());
+    }
+    /* 見出しにあてはまる章の本文(小見出しの中身も含む) */
+    return (re, shallow) => {
+      const i = secs.findIndex((s, k) => k > 0 && re.test(s.name));
+      if (i < 0) return [];
+      const out = [...secs[i].lines];
+      for (let k = i + 1; !shallow && k < secs.length && secs[k].level > secs[i].level; k++) out.push(...secs[k].lines);
+      return out;
+    };
+  }
+  function fromWikipedia(text) {
+    const lead = (() => { const i = text.search(/\n={2,}/); return (i < 0 ? text : text.slice(0, i)).split("\n").map((s) => s.trim()).filter(Boolean); })();
+    const sec = parseWiki(text);
+    const cat = {};
+    cat.catch = makeCards(sents(lead), { tag: "まち", limit: 1 });
+    cat.hist = makeCards(sents(sec(/歴史|沿革/)).filter((s) => /年/.test(s)), { tag: "ゆかり", limit: 1 });
+    const geo = sents(sec(/^地理$|^地形|^自然/, true));
+    const clim = sents(sec(/気候/)).filter((s) => /気温|降水|降雪|雪|雨|気候|冬|夏/.test(s));
+    cat.geo = [...makeCards(geo, { tag: "車窓", limit: 1 }), ...makeCards(clim, { tag: "車窓", limit: 1 })];
+    let food = sents(sec(/特産|名産|名物|グルメ|食文化|郷土料理|食/));
+    if (!food.length) food = sents(sec(/産業|農業|漁業/));
+    cat.food = makeCards(food, { tag: "味", limit: 1 });
+    const road = sents(sec(/交通/).length ? sec(/交通/) : sec(/道路/)).filter((s) => /道路|国道|高速|自動車道|インターチェンジ|バイパス|道の駅/.test(s));
+    cat.road = makeCards(road, { tag: "道路", limit: 1 });
+    if (!cat.catch.length) cat.catch = [{ tag: "まち", t: clean(lead.join("")).slice(0, 100) || "この町の紹介文は見つかりませんでした。" }];
+    return cat;
+  }
+
+  /* ---------- Wikidata: 人口・面積・出身の有名人 ---------- */
+  async function wikidataNumbers(qid) {
+    const r = await fetch("https://www.wikidata.org/wiki/Special:EntityData/" + qid + ".json");
+    if (!r.ok) return null;
+    const e = (await r.json()).entities[qid]; const claims = (e && e.claims) || {};
+    const latest = (prop) => {
+      const arr = (claims[prop] || []).filter((c) => c.rank !== "deprecated" && c.mainsnak && c.mainsnak.datavalue);
+      const pref = arr.filter((c) => c.rank === "preferred"); const list = pref.length ? pref : arr;
+      const when = (c) => (c.qualifiers && c.qualifiers.P585 && c.qualifiers.P585[0].datavalue && c.qualifiers.P585[0].datavalue.value.time) || "";
+      list.sort((a, b) => when(b).localeCompare(when(a)));
+      return list[0] ? { v: list[0].mainsnak.datavalue.value, when: when(list[0]) } : null;
+    };
+    const pop = latest("P1082"), area = latest("P2046");
+    const popN = pop ? Math.round(Number(pop.v.amount)) : null;
+    const areaN = area && /Q712226$/.test(area.v.unit || "") ? Number(area.v.amount) : null;
+    const parts = [];
+    if (popN) {
+      const y = pop.when ? "(" + pop.when.slice(1, 5) + "年)" : "";
+      parts.push("人口は" + (popN >= 10000 ? "約" + (Math.round(popN / 1000) / 10) + "万人" : popN + "人") + y + "。");
+    }
+    if (areaN) {
+      parts.push("面積は" + (Math.round(areaN * 10) / 10).toLocaleString("ja-JP") + "km²" + (popN ? "で、1km²あたり約" + Math.round(popN / areaN).toLocaleString("ja-JP") + "人。" : "。"));
+    }
+    return parts.length ? [{ tag: "数字", t: parts.join("") }] : null;
+  }
+  async function wikidataPeople(qid) {
+    const q = "SELECT ?pLabel ?pDescription ?sl WHERE { ?p wdt:P19 wd:" + qid + "; wdt:P31 wd:Q5; wikibase:sitelinks ?sl. SERVICE wikibase:label { bd:serviceParam wikibase:language \"ja\". } } ORDER BY DESC(?sl) LIMIT 6";
+    const r = await fetch("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(q));
+    if (!r.ok) return null;
+    const rows = ((await r.json()).results.bindings || [])
+      .map((b) => ({ n: b.pLabel && b.pLabel.value, d: b.pDescription ? b.pDescription.value : "" }))
+      .filter((p) => p.n && !/^Q\d+$/.test(p.n));
+    if (!rows.length) return null;
+    const one = (p) => p.n + (p.d ? "(" + p.d.slice(0, 18) + ")" : "");
+    let text = "この町の出身者に、" + one(rows[0]);
+    for (const p of rows.slice(1, 3)) { if ((text + "、" + one(p) + "などがいます。").length <= 100) text += "、" + one(p); }
+    return [{ tag: "ゆかり", t: text + "などがいます。" }];
+  }
+
+  function assemble() {
+    const c = S.cat || {};
+    S.cards = [].concat(c.catch || [], c.num || [], c.people || [], c.hist || [], c.geo || [], c.food || [], nearestEkiCard(), c.road || []);
   }
   async function enterTown(name, pref) {
     const key = pref + name;
     if (S.town === key) return;
-    S.loading = true; S.town = key;
-    S.head = ""; S.fullText = "";
+    S.town = key; S.loading = true;
     showMessage(name + "\nを調べています…");
-    const text = await fetchIntro(name, pref);
+    const wiki = await fetchTown(name, pref);
+    if (S.town !== key) return;
     S.loading = false;
     S.head = pref + "\n" + name + "\nに入りました";
-    S.fullText = text ? clean(text) : "この町の紹介文は見つかりませんでした。";
-    S.idx = 0; build(); render(); restartTimer();
+    S.cat = wiki ? fromWikipedia(wiki.text) : { catch: [{ tag: "まち", t: "この町の紹介文は見つかりませんでした。" }] };
+    S.idx = 0; assemble(); build(); render(); schedule();
+    if (wiki && wiki.qid) {
+      /* 数字と出身者は少し遅れて届くので、届いたらカードに加える */
+      const add = (field) => (v) => { if (S.town === key && v) { S.cat[field] = v; assemble(); build(); } };
+      wikidataNumbers(wiki.qid).then(add("num")).catch(() => {});
+      wikidataPeople(wiki.qid).then(add("people")).catch(() => {});
+    }
   }
 
   /* ---------- 画面を点けたままにする ---------- */
@@ -378,11 +492,11 @@
   $("b-next").onclick = () => go(1);
   $("b-play").onclick = () => {
     S.paused = !S.paused; $("b-play").textContent = S.paused ? "▶▶" : "❚❚";
-    $("b-play").setAttribute("aria-label", S.paused ? "再開" : "一時停止"); restartTimer();
+    $("b-play").setAttribute("aria-label", S.paused ? "再開" : "一時停止"); schedule();
   };
   $("b-speed").onclick = () => {
     const i = (SPEEDS.indexOf(S.interval) + 1) % SPEEDS.length;
-    S.interval = SPEEDS[i]; $("b-speed").textContent = (S.interval / 1000) + "秒"; restartTimer();
+    S.interval = SPEEDS[i]; $("b-speed").textContent = (S.interval / 1000) + "秒"; schedule();
   };
   /* 画面タップで次のページ。長押しでデモの町に切り替え(GPS不要で動作確認できます) */
   let pressTimer = null, longPressed = false;
@@ -395,8 +509,7 @@
   panelEl.addEventListener("pointercancel", endPress);
   panelEl.addEventListener("click", () => { if (!longPressed) go(1); longPressed = false; });
 
-  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (S.fullText) { build(); render(); } }, 200); });
-  layout();
+  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 200); });
 })();
 </script>
 </body>
