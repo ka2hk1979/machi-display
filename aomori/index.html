@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>まち紹介ディスプレイ 青森</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="まち青森">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+  @font-face { font-family: "DotGothic16"; src: url("fonts/dotgothic-sub.woff2") format("woff2"); font-display: swap; }
+  :root { --bg:#000; --panel:#0a0b0e; --ink:#f4f7ff; --dim:#a3acbc; --ok:#7dffa6; --warn:#ffcf5a; --bad:#ff7a7a;
+          --font:"DotGothic16","Hiragino Kaku Gothic ProN","Hiragino Sans",sans-serif; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:var(--font); }
+  body { display:grid; grid-template-rows:auto 1fr auto auto; gap:10px; overflow:hidden; user-select:none; -webkit-user-select:none;
+         padding:max(14px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); }
+  body.dim #panel, body.dim #bar, body.dim #status { filter:brightness(.55); }
+  #status { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:15px; color:var(--dim); min-height:1.2em; }
+  #status b { font-weight:normal; color:var(--ink); } #status .ok{color:var(--ok)} #status .warn{color:var(--warn)}
+  body.drive #status { display:none; }
+  #panel { min-height:0; border-radius:6px; background:var(--panel); border:1px solid #1b1e26; padding:12px 16px 24px; position:relative; overflow:hidden; display:flex; flex-direction:column; gap:8px; }
+  #tag { font-size:18px; letter-spacing:.1em; color:var(--warn); min-height:1.3em; }
+  #tag.alert { color:var(--ok); } #tag.title { color:var(--dim); } #tag.warn { color:var(--bad); }
+  #screen { flex:1; min-height:0; overflow:hidden; line-height:1.28; white-space:pre-wrap; word-break:break-all; text-shadow:0 0 6px rgba(190,210,255,.3); }
+  #screen .hook { color:#fff; margin-bottom:.45em; } #screen .ans { color:var(--warn); margin-top:.5em; }
+  #screen .foot { color:var(--dim); margin-top:.7em; }
+  #screen.title { color:#fff; } #screen.alert { color:var(--ok); } #screen.alert .hook { color:#fff; }
+  #pager { position:absolute; right:12px; bottom:6px; font-size:14px; color:var(--dim); }
+  #gpsWarn { position:absolute; inset:0; background:rgba(0,0,0,.88); color:var(--bad); display:flex; align-items:center; justify-content:center; text-align:center; font-size:30px; line-height:1.5; padding:20px; z-index:2; }
+  #fb { display:none; gap:10px; } #fb.on { display:flex; }
+  #fb button { flex:1; font:inherit; font-size:18px; padding:12px 6px; border-radius:6px; border:1px solid #31402f; background:#111a14; color:var(--ok); }
+  #bar { display:flex; gap:10px; }
+  #bar button { flex:1; font:inherit; font-size:20px; color:var(--ink); background:#11141a; border:1px solid #262b36; border-radius:6px; padding:14px 4px; min-height:56px; }
+  #bar button:active { background:#1c212b; } #bar button.on { border-color:var(--warn); color:var(--warn); }
+  .overlay { position:fixed; inset:0; background:var(--bg); z-index:5; overflow:auto; padding:max(20px,env(safe-area-inset-top)) 22px max(24px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:14px; }
+  .overlay h1 { margin:0; font-weight:normal; font-size:30px; line-height:1.3; }
+  .overlay h2 { margin:6px 0 0; font-weight:normal; font-size:20px; color:var(--warn); }
+  .overlay p, .overlay li { margin:0; color:var(--dim); font-size:16px; line-height:1.7; max-width:34em; }
+  .overlay ul { margin:0; padding-left:1.2em; }
+  .overlay button, .overlay select { font:inherit; font-size:19px; padding:14px; border-radius:6px; border:1px solid #2d3340; background:#11141a; color:var(--ink); }
+  .overlay button.main { background:var(--ink); color:#000; }
+  .overlay .row { display:flex; gap:10px; flex-wrap:wrap; } .overlay .row > * { flex:1; min-width:120px; }
+  .chk li { list-style:none; } .chk .ok::before { content:"✔ "; color:var(--ok); } .chk .ng::before { content:"✖ "; color:var(--bad); } .chk .wn::before { content:"▲ "; color:var(--warn); }
+  [hidden] { display:none !important; }
+  @media (orientation:landscape) and (max-height:520px) {
+    body { grid-template-columns:1fr 92px; grid-template-rows:auto 1fr auto; }
+    #status { grid-column:1 / 3; } #panel { grid-column:1; grid-row:2 / 4; }
+    #fb { grid-column:2; grid-row:2; flex-direction:column; } #bar { grid-column:2; grid-row:3; flex-direction:column; }
+    #bar button { min-height:44px; padding:8px 2px; font-size:18px; }
+  }
+</style>
+</head>
+<body class="drive">
+<div id="status"><span>GPS:<b id="st-gps">--</b></span><span>精度:<b id="st-acc">--</b></span><span>向き:<b id="st-dir">--</b></span><span>速度:<b id="st-spd">--</b></span><span><b id="st-note"></b></span></div>
+<div id="panel"><div id="tag" class="title"></div><div id="screen" class="title">GPSを待っています…</div><div id="pager"></div><div id="gpsWarn" hidden>GPS停止中<br>電波の届く場所で再開します</div></div>
+<div id="fb"><button data-v="へえ！">へえ！</button><button data-v="微妙">微妙</button><button data-v="寄った">寄った</button></div>
+<div id="bar"><button id="b-prev" aria-label="前">◀</button><button id="b-play" aria-label="一時停止">❚❚</button><button id="b-next" aria-label="次">▶</button><button id="b-lock" aria-label="ロック">🔒</button><button id="b-menu" aria-label="メニュー">⋯</button></div>
+
+<div id="intro" class="overlay">
+  <h1>町に入ると、<br>その町の「へえ〜」が流れます。</h1>
+  <p>青森県の40市町村ぶん。通信なしで動きます。進行方向の名所・道の駅と、次の町も予告します。</p>
+  <ul>
+    <li>運転者は画面を注視しないでください。同乗者が見るか、停車中に確認してください。</li>
+    <li>固定ホルダーに置き、給電しながら、省電力モードはオフにしてください。</li>
+    <li>走行中はこのアプリを前面に出したままにしてください（他のアプリに切り替えるとGPSが止まります）。</li>
+  </ul>
+  <div class="row"><button class="main" id="go-gps">スタート(GPS)</button></div>
+  <div class="row"><button id="go-check">出発前チェック</button><button id="go-sim">シミュレーション</button></div>
+  <p id="buildline"></p>
+</div>
+
+<div id="menu" class="overlay" hidden>
+  <h1>メニュー</h1>
+  <h2>表示</h2>
+  <div class="row"><button id="m-pass"></button><button id="m-dim"></button></div>
+  <div class="row"><button id="m-speed"></button><button id="m-fb"></button></div>
+  <h2>走行シミュレーション</h2>
+  <div class="row"><select id="m-route"></select><select id="m-mult"><option value="1">等倍</option><option value="5">5倍</option><option value="20">20倍</option></select></div>
+  <div class="row"><button id="m-sim">シミュレーション開始</button><button id="m-simstop">止める</button></div>
+  <h2>ログ</h2>
+  <div class="row"><button id="m-share">ログを共有</button><button id="m-copy">ログをコピー</button><button id="m-clear">ログを消去</button></div>
+  <p id="m-logstat"></p>
+  <h2>その他</h2>
+  <div class="row"><button id="m-check">出発前チェック</button><button id="m-update">更新を確認</button><button id="m-about">出典・ライセンス</button></div>
+  <div class="row"><button class="main" id="m-close">閉じる</button></div>
+  <p id="m-build"></p>
+</div>
+
+<div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
+
+<pre id="logdump" hidden></pre>
+<script src="data.js?v=2026-10-16.0658"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const screenEl = $("screen"), tagEl = $("tag"), panelEl = $("panel");
+  const now = () => Date.now();
+
+  /* ---------- 設定値 ---------- */
+  const QUIZ_WAIT = 4000, QUIZ_HOLD = 3500;        /* 問題→答えまで4秒、答えのあと3.5秒は割り込まない */
+  const MIN_SHOW = 3000, COOLDOWN = 20000;         /* 割り込みで切り替えるまでの最短表示 / 強制ジャンプの間隔 */
+  const AHEAD_LV = [15000, 10000, 5000, 2000, 1000, 500], NEXT_LV = [20000, 10000, 5000];
+  const SLOW = 4.2, FAST = 16.7;                   /* 15km/h, 60km/h (m/s) */
+  const WINTER = [11, 12, 1, 2, 3, 4];
+  const MULTS = [1, 1.5, 2], MULT_NAMES = ["表示:標準", "表示:ゆっくり", "表示:じっくり"];
+  const NAMES = Object.keys(TOWNS);
+
+  const S = {
+    pages: [], idx: 0, paused: false, mult: 0, timer: null, qTimer: null, revealed: false, pageSince: 0,
+    town: undefined, head: "", cards: [], pend: null, cand: null,
+    pos: null, trail: [], heading: null, speed: null, lastFix: 0, lastAcc: null,
+    alert: { ahead: null, next: null }, levels: {}, pending: {}, lastJump: 0, lastNext: 0,
+    passenger: true, showFb: false, locked: false, gpsMode: false, sim: null, wake: null, wakeOk: null,
+    logBuf: [], lastPosLog: 0
+  };
+
+  /* ---------- 幾何 ---------- */
+  const R_EARTH = 6371000, RAD = Math.PI / 180;
+  function dist(a, b) {
+    const dLat = (b.lat - a.lat) * RAD, dLon = (b.lon - a.lon) * RAD;
+    const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * RAD) * Math.cos(b.lat * RAD) * Math.sin(dLon / 2) ** 2;
+    return 2 * R_EARTH * Math.asin(Math.sqrt(x));
+  }
+  function bearing(a, b) {
+    const y = Math.sin((b.lon - a.lon) * RAD) * Math.cos(b.lat * RAD);
+    const x = Math.cos(a.lat * RAD) * Math.sin(b.lat * RAD) - Math.sin(a.lat * RAD) * Math.cos(b.lat * RAD) * Math.cos((b.lon - a.lon) * RAD);
+    return (Math.atan2(y, x) / RAD + 360) % 360;
+  }
+  const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  function dest(a, brg, d) {
+    const dr = d / R_EARTH, b = brg * RAD, la = a.lat * RAD, lo = a.lon * RAD;
+    const la2 = Math.asin(Math.sin(la) * Math.cos(dr) + Math.cos(la) * Math.sin(dr) * Math.cos(b));
+    const lo2 = lo + Math.atan2(Math.sin(b) * Math.sin(dr) * Math.cos(la), Math.cos(dr) - Math.sin(la) * Math.sin(la2));
+    return { lat: la2 / RAD, lon: lo2 / RAD };
+  }
+  const COMPASS = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
+  function fmtDist(d) {
+    if (d < 1000) return "約" + Math.max(100, Math.round(d / 100) * 100) + "m";
+    if (d < 10000) return "約" + (Math.round(d / 100) / 10) + "km";
+    return "約" + Math.round(d / 1000) + "km";
+  }
+  function fmtEta(d) {
+    if (S.speed == null || S.speed < 5 || d < 1500) return "";
+    const m = Math.round(d / S.speed / 60);
+    return m >= 1 ? "（直線で約" + m + "分）" : "";
+  }
+
+  /* ---------- 町の境界 ---------- */
+  const POLY = {};   /* 町名 -> {bbox, polys:[[ring,...]]} */
+  for (const n of NAMES) {
+    const polys = GEO.polys[n]; let x0 = 999, x1 = -999, y0 = 999, y1 = -999;
+    for (const p of polys) for (const [x, y] of p[0]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    POLY[n] = { bbox: [x0, y0, x1, y1], polys };
+  }
+  function inRing(x, y, ring) {
+    let c = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  }
+  function inTown(n, lon, lat, pad) {
+    const t = POLY[n], b = t.bbox;
+    if (lon < b[0] - pad || lon > b[2] + pad || lat < b[1] - pad || lat > b[3] + pad) return false;
+    for (const p of t.polys) {
+      if (!inRing(lon, lat, p[0])) continue;
+      let hole = false;
+      for (let k = 1; k < p.length; k++) if (inRing(lon, lat, p[k])) { hole = true; break; }
+      if (!hole) return true;
+    }
+    return false;
+  }
+  function edgeDist(n, here) {   /* 町の境界線までの最短距離(m)。近似の平面計算 */
+    const kx = Math.cos(here.lat * RAD) * 111320, ky = 110540; let best = 1e9;
+    for (const p of POLY[n].polys) {
+      const ring = p[0];
+      for (let i = 0; i < ring.length - 1; i++) {
+        const ax = (ring[i][0] - here.lon) * kx, ay = (ring[i][1] - here.lat) * ky, bx = (ring[i + 1][0] - here.lon) * kx, by = (ring[i + 1][1] - here.lat) * ky;
+        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+        const d = Math.hypot(ax + t * dx, ay + t * dy); if (d < best) best = d;
+      }
+    }
+    return best;
+  }
+  function townAt(here, tol) {
+    if (S.town && inTown(S.town, here.lon, here.lat, 0)) return S.town;
+    for (const n of NAMES) if (n !== S.town && inTown(n, here.lon, here.lat, 0)) return n;
+    if (tol) {   /* 海岸や橋で境界の外に出た時は、tol(m)以内なら近い町とみなす */
+      let best = null;
+      for (const n of NAMES) { if (!inTown(n, here.lon, here.lat, 0.001)) continue; const d = edgeDist(n, here); if (d <= tol && (!best || d < best.d)) best = { n, d }; }
+      if (best) return best.n;
+    }
+    return null;
+  }
+
+  /* ---------- ログ(IndexedDB) ---------- */
+  let db = null;
+  try {
+    const rq = indexedDB.open("aomoriLog", 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore("ev", { autoIncrement: true });
+    rq.onsuccess = () => { db = rq.result; };
+  } catch (e) { /* ログなしでも動作する */ }
+  function logEv(type, data) {
+    const e = Object.assign({ t: new Date().toISOString(), type }, data || {});
+    S.logBuf.push(e); window.__log && window.__log.push(e);
+    if (S.logBuf.length >= 40) flushLog();
+  }
+  function flushLog() {
+    if (!db || !S.logBuf.length) return;
+    const items = S.logBuf.splice(0);
+    try { const tx = db.transaction("ev", "readwrite"), st = tx.objectStore("ev"); items.forEach((e) => st.add(e)); } catch (err) { /* 失敗しても続行 */ }
+  }
+  function readLog() {
+    flushLog();
+    return new Promise((res) => {
+      if (!db) return res([]);
+      const out = []; const rq = db.transaction("ev").objectStore("ev").openCursor();
+      rq.onsuccess = () => { const c = rq.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
+      rq.onerror = () => res(out);
+    });
+  }
+  setInterval(flushLog, 20000);
+  addEventListener("pagehide", flushLog);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { flushLog(); logEv("hidden"); }
+    else { logEv("visible"); if (S.gpsMode || S.sim) keepAwake(); }
+  });
+
+  /* ---------- 状態表示 ---------- */
+  function setStatus(id, text, cls) { const el = $(id); el.textContent = text; el.className = cls || ""; }
+  function showHeading() { setStatus("st-dir", S.heading == null ? "--" : COMPASS[Math.round(S.heading / 45) % 8]); }
+
+  /* ---------- 既読の記録 ---------- */
+  const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+  function loadSeen() { try { return JSON.parse(localStorage.getItem("aomoriSeen") || "{}"); } catch (e) { return {}; } }
+  function saveSeen(m) { try { localStorage.setItem("aomoriSeen", JSON.stringify(m)); } catch (e) { /* 保存できなくても続行 */ } }
+  function markSeen(card) {
+    if (!card || !card.id || !S.town) return;
+    const m = loadSeen(); const r = (m[S.town] = m[S.town] || { visits: 1, seen: [] });
+    if (!r.seen.includes(card.id)) { r.seen.push(card.id); saveSeen(m); }
+  }
+
+  /* ---------- 表示(文字サイズは収まる最大) ---------- */
+  function linesNeeded(text, cols) { return text.split("\n").reduce((n, ln) => n + Math.max(1, Math.ceil(ln.length / cols)), 0); }
+  function fit(parts) {
+    const w = screenEl.clientWidth, h = screenEl.clientHeight;
+    const text = parts.filter(Boolean).join("\n\n");
+    for (let fs = Math.min(64, Math.floor(w / 5)); fs >= 20; fs -= 2) {
+      const cols = Math.max(1, Math.floor(w / fs)), lines = Math.floor(h / (fs * 1.28));
+      if (linesNeeded(text, cols) * 1.25 <= lines) return fs;
+    }
+    return 20;
+  }
+  const quizOk = () => S.passenger || S.speed == null || S.speed < SLOW;
+  const visible = (p) => p.alert ? !!S.alert[p.alert] : p.q ? quizOk() : true;
+  function step(delta) {
+    const n = S.pages.length; if (!n) return;
+    let i = S.idx;
+    for (let k = 0; k < n; k++) { i = (i + delta + n) % n; if (visible(S.pages[i])) break; }
+    S.idx = i;
+  }
+  function pageParts(p) {
+    if (p.alert) return S.alert[p.alert];
+    if (p.title) return { body: p.t };
+    if (p.q) return { hook: p.q, ans: S.revealed ? "答え：" + p.a : "" };
+    return { hook: p.hook, body: p.t };
+  }
+  function render() {
+    clearTimeout(S.qTimer);
+    if (!S.pages.length) return;
+    if (!visible(S.pages[S.idx])) step(1);
+    const p = S.pages[S.idx], c = pageParts(p) || {};
+    const kind = p.alert ? "alert" : (p.title ? "title" : "");
+    tagEl.textContent = p.alert ? "【" + (c.tag || "") + "】" : (p.tag ? "【" + p.tag + "】" : "");
+    tagEl.className = kind; screenEl.className = kind;
+    const fs = fit([c.hook, c.body, c.ans, c.foot]);
+    screenEl.textContent = "";
+    for (const [cls, k] of [["hook", 1.2], ["body", 1], ["ans", 1.2], ["foot", 0.75]]) {
+      if (!c[cls]) continue;
+      const d = document.createElement("div"); d.className = cls; d.textContent = c[cls]; d.style.fontSize = Math.round(fs * k) + "px"; screenEl.appendChild(d);
+    }
+    if (p.q && !S.revealed) S.qTimer = setTimeout(() => { S.revealed = true; render(); schedule(); }, QUIZ_WAIT);
+    const vis = S.pages.filter(visible);
+    $("pager").textContent = (vis.indexOf(p) + 1) + "/" + vis.length;
+  }
+  function showPage(i, why) {
+    S.idx = i; S.revealed = false; S.pageSince = now(); render(); schedule(); markSeen(S.pages[i]);
+    const p = S.pages[i]; logEv("page", { kind: p.alert || (p.title ? "title" : p.q ? "quiz" : "card"), id: p.id || null, why: why || "auto" });
+  }
+  function pageDelay(p) {
+    if (p.title) return 2800;
+    if (p.q) return S.revealed ? 4000 : QUIZ_WAIT + 4000;
+    const c = pageParts(p) || {}; const len = [c.hook, c.body, c.foot].filter(Boolean).join("").length;
+    return Math.max(5000, 2000 + 120 * len) * MULTS[S.mult];
+  }
+  function schedule() {
+    clearTimeout(S.timer);
+    if (S.paused || !S.pages.length) return;
+    S.timer = setTimeout(advance, pageDelay(S.pages[S.idx]));
+  }
+  function advance() {
+    if (S.pend) { applyTown(); return; }
+    if (S.pages.length > 1) { step(1); showPage(S.idx, "auto"); } else schedule();
+  }
+  function go(delta) { if (!S.pages.length) return; step(delta); showPage(S.idx, "manual"); }
+
+  /* ---------- ページ構成 ---------- */
+  function build() {
+    const pages = [];
+    const alerts = () => { pages.push({ alert: "ahead" }); pages.push({ alert: "next" }); };
+    if (S.head) pages.push({ t: S.head, title: true });
+    alerts();
+    S.cards.forEach((c, i) => { pages.push(c); if ((i + 1) % 3 === 0 && i + 1 < S.cards.length) alerts(); });
+    S.pages = pages;
+    if (S.idx >= pages.length) S.idx = 0;
+  }
+  function setPagesFresh() { S.idx = 0; S.revealed = false; S.pageSince = now(); build(); showPage(0, "town"); }
+
+  /* ---------- 町に入る ---------- */
+  function cardsFor(name) {
+    const m = loadSeen(), rec = m[name];
+    const visits = rec ? rec.visits + 1 : 1;
+    m[name] = { visits, seen: rec ? rec.seen : [] }; saveSeen(m);
+    let cards = TOWNS[name].cards.map((c) => ({ ...c, id: name + "#" + hash(c.q || c.hook + c.t) }));
+    if (S.speed != null && S.speed > FAST) {   /* 高速で通過する町は代表カードだけ */
+      const pick = cards.find((c) => c.teaser) || cards.find((c) => !c.q);
+      const other = cards.find((c) => c !== pick && !c.q && !m[name].seen.includes(c.id));
+      cards = [pick, other].filter(Boolean);
+    }
+    const fresh = cards.filter((c) => !m[name].seen.includes(c.id)), old = cards.filter((c) => m[name].seen.includes(c.id));
+    if (!fresh.length) { m[name].seen = []; saveSeen(m); return { cards, visits }; }
+    return { cards: [...fresh, ...old], visits };
+  }
+  function enterTown(name) {
+    S.town = name; S.levels = {}; S.alert.next = null;
+    const { cards } = cardsFor(name);
+    S.cards = cards; S.head = TOWNS[name].pref + "\n" + name + "\nに入りました";
+    logEv("town", { town: name, speed: S.speed });
+    setPagesFresh();
+  }
+  function enterNone() {
+    S.town = null; S.levels = {};
+    S.cards = GEO.pool.map((c) => ({ ...c, id: "pool#" + hash(c.hook + c.t) })).sort(() => Math.random() - 0.5).slice(0, 4);
+    S.head = "いま\n青森県外・沖合"; logEv("town", { town: null });
+    setPagesFresh();
+  }
+  function applyTown() {
+    const t = S.pend && S.pend.t; S.pend = null;
+    if (t === null) enterNone(); else if (t) enterTown(t);
+  }
+  function tickPendingTown() {
+    if (!S.pend) return;
+    if (!S.pages.length || canInterrupt(false)) applyTown();
+  }
+  /* 町の切り替え判定: 最初は即時。以後は候補が5秒以上続き、かつ150m以上進むまで確定しない(境界での行き来を防ぐ)。精度の悪い測位は使わない。
+     確定しても、読みかけのカードがあれば少し待ってから切り替える */
+  function townState(here, acc) {
+    if (acc != null && acc > 100) return;
+    const t = townAt(here, 80);
+    if (S.town === undefined) { S.pend = { t }; applyTown(); return; }
+    if (t === S.town) { S.cand = null; S.pend = null; return; }
+    if (!S.cand || S.cand.town !== t) { S.cand = { town: t, since: now(), pos: here }; return; }
+    const need = t === null ? 10000 : 5000, far = t === null ? 250 : 150;
+    if (now() - S.cand.since >= need && dist(S.cand.pos, here) >= far) { S.pend = { t }; S.cand = null; tickPendingTown(); }
+  }
+
+  /* ---------- 割り込みの調停 ---------- */
+  function quizProtected() {
+    const p = S.pages[S.idx];
+    return !!(p && p.q && now() - S.pageSince < QUIZ_WAIT + QUIZ_HOLD);
+  }
+  function canInterrupt(checkCooldown) {
+    if (quizProtected()) return false;
+    if (S.pages.length && now() - S.pageSince < MIN_SHOW) return false;
+    if (checkCooldown && now() - S.lastJump < COOLDOWN) return false;
+    return true;
+  }
+  const PRIO = { ahead: 1, next: 2 };
+  function requestInterrupt(kind, key, lv) {
+    const k = kind + ":" + key;
+    if (!S.pending[k] || S.pending[k].lv < lv) { S.pending[k] = { kind, key, lv, exp: now() + 120000 }; logEv("irq", { kind, key, lv }); }
+    tickPending();
+  }
+  function tickPending() {
+    const t = now(); let best = null;
+    for (const k of Object.keys(S.pending)) {
+      const p = S.pending[k];
+      if (p.exp < t || !S.alert[p.kind]) { delete S.pending[k]; continue; }
+      if (!best || PRIO[p.kind] < PRIO[best.kind]) best = p;
+    }
+    if (!best) return;
+    if (!canInterrupt(true)) { if (!S.pending[best.kind + ":" + best.key].logged) { S.pending[best.kind + ":" + best.key].logged = 1; logEv("irq-hold", { kind: best.kind, key: best.key, quiz: quizProtected(), cool: now() - S.lastJump < COOLDOWN }); } return; }
+    const i = S.pages.findIndex((p, j) => p.alert === best.kind && j !== S.idx);
+    const same = S.pages[S.idx] && S.pages[S.idx].alert === best.kind;
+    delete S.pending[best.kind + ":" + best.key];
+    S.levels[best.kind + ":" + best.key] = best.lv; S.lastJump = now();
+    if (same) { render(); schedule(); } else if (i >= 0) showPage(i, best.kind + "-jump");
+  }
+  setInterval(() => {
+    tickPending(); tickPendingTown();
+    const stale = S.gpsMode && S.lastFix && now() - S.lastFix > 15000;
+    $("gpsWarn").hidden = !stale;
+  }, 500);
+
+  /* ---------- 進行方向の案内(名所と道の駅を1ページに統合) ---------- */
+  function lookRange() { return S.speed != null && S.speed > 3 ? Math.max(3000, Math.min(15000, S.speed * 150)) : 8000; }
+  function checkAhead(here) {
+    if (S.heading == null) { S.alert.ahead = null; return; }
+    const R = lookRange(), items = [];
+    const consider = (it, type) => {
+      const d = dist(here, it), eff = Math.max(0, d - (it.radius || 0));
+      if (eff > AHEAD_LV[0] * 1.3) { S.levels["ahead:" + it.id] = 0; }
+      if (eff > R) return;
+      const dl = angDiff(bearing(here, it), S.heading), f = d * Math.cos(dl * RAD), l = d * Math.sin(dl * RAD);
+      if (dl >= 90 || Math.abs(l) > Math.max(600, 0.5 * f)) return;
+      items.push({ it, type, eff });
+    };
+    GEO.sights.forEach((s) => consider(s, "名所")); GEO.eki.forEach((s) => consider(s, "道の駅"));
+    if (!items.length) { S.alert.ahead = null; return; }
+    items.sort((a, b) => a.eff - b.eff);
+    const a = items[0], b = items[1], it = a.it;
+    const lead = a.eff < 300 ? "まもなく" : "この先 " + fmtDist(a.eff) + fmtEta(a.eff);
+    let body = lead;
+    const sub = a.type === "道の駅" ? (it.meibutsu ? "名物：" + it.meibutsu : it.note ? "立ち寄り：" + it.note : "") : (it.desc || "");
+    if (sub) body += "\n" + sub;
+    const winter = WINTER.includes(new Date().getMonth() + 1);
+    if (winter && ((a.type === "名所" && it.season === "冬季閉鎖") || it.winter)) body += "\n※冬は閉鎖・通行止めの可能性あり";
+    S.alert.ahead = { tag: a.type, hook: it.name, body, foot: b ? "その先：" + b.it.name + " " + fmtDist(b.eff) : "" };
+    const lv = AHEAD_LV.filter((t) => a.eff <= t).length;
+    if (lv > (S.levels["ahead:" + it.id] || 0)) requestInterrupt("ahead", it.id, lv);
+    else if (S.pages[S.idx] && S.pages[S.idx].alert === "ahead") render();
+  }
+  /* ---------- 次の町の予告(進行方向に500mおきに境界を調べる) ---------- */
+  function checkNext(here) {
+    if (S.heading == null || now() - S.lastNext < 2000) return;
+    S.lastNext = now();
+    const reach = S.speed != null && S.speed > 3 ? Math.max(10000, Math.min(30000, S.speed * 240)) : 30000;
+    let found = null;
+    for (let d = 500; d <= reach; d += 500) {
+      const p = dest(here, S.heading, d), t = townAt(p, 0);
+      if (t && t !== S.town) { found = { t, d }; break; }
+    }
+    if (!found || found.d > 20000) { S.alert.next = null; return; }   /* 次の町は20km以内になってから案内する */
+    const tz = TOWNS[found.t].cards.find((c) => c.teaser) || TOWNS[found.t].cards.find((c) => c.hook);
+    S.alert.next = { tag: "次の町", hook: found.t, body: "あと" + fmtDist(found.d) + fmtEta(found.d), foot: tz ? "見どころ：" + (tz.hook || tz.q) : "" };
+    const lv = NEXT_LV.filter((t) => found.d <= t).length;
+    if (lv > (S.levels["next:" + found.t] || 0)) requestInterrupt("next", found.t, lv);
+    else if (S.pages[S.idx] && S.pages[S.idx].alert === "next") render();
+  }
+
+  /* ---------- 位置の取り込み ---------- */
+  function updateHeading(c, here) {
+    const last = S.trail[S.trail.length - 1];
+    if (!last || dist(last, here) >= 15) { S.trail.push(here); if (S.trail.length > 10) S.trail.shift(); }
+    if (c.heading != null && !isNaN(c.heading) && c.speed != null && c.speed > 1.5) S.heading = c.heading;
+    else { const from = S.trail.find((p) => dist(p, here) >= 40); if (from) S.heading = bearing(from, here); }
+    showHeading();
+  }
+  function ingest(c) {   /* c = {lat, lon, acc, speed, heading} */
+    const here = { lat: c.lat, lon: c.lon };
+    S.pos = here; S.lastFix = now(); S.lastAcc = c.acc;
+    S.speed = c.speed != null && !isNaN(c.speed) ? c.speed : S.speed;
+    setStatus("st-gps", S.sim ? "SIM" : "OK", S.sim ? "warn" : "ok");
+    setStatus("st-acc", Math.round(c.acc) + "m", c.acc > 100 ? "warn" : "");
+    setStatus("st-spd", S.speed == null ? "--" : Math.round(S.speed * 3.6) + "km/h");
+    updateHeading(c, here);
+    if (now() - S.lastPosLog > 10000) { S.lastPosLog = now(); logEv("pos", { lat: +here.lat.toFixed(5), lon: +here.lon.toFixed(5), acc: Math.round(c.acc), v: S.speed == null ? null : +S.speed.toFixed(1), h: S.heading == null ? null : Math.round(S.heading), town: S.town }); }
+    townState(here, c.acc);
+    if (S.pages.length) { checkAhead(here); checkNext(here); }
+  }
+  function onPos(pos) {
+    const c = pos.coords;
+    ingest({ lat: c.latitude, lon: c.longitude, acc: c.accuracy, speed: c.speed, heading: c.heading });
+  }
+  function onErr(e) { setStatus("st-gps", e.code === 1 ? "許可なし" : "探索中", "warn"); logEv("gps-err", { code: e.code }); }
+  let wId = null;
+  function startGps() {
+    hideAll(); keepAwake(); S.gpsMode = true; S.lastFix = now(); document.body.classList.add("drive");
+    if (!navigator.geolocation) { setStatus("st-gps", "非対応", "warn"); showMsg("このブラウザは位置情報に対応していません。"); return; }
+    showMsg("GPSを\n待っています…");
+    wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+    setInterval(() => { if (S.gpsMode && now() - S.lastFix > 30000) { try { navigator.geolocation.clearWatch(wId); } catch (e) { /* 無視 */ } wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }); S.lastFix = now(); logEv("gps-restart"); } }, 10000);
+  }
+  function showMsg(t) { S.head = t; S.cards = []; S.town = undefined; S.pend = null; S.cand = null; S.idx = 0; build(); showPage(0, "msg"); }
+  async function keepAwake() {
+    try { if ("wakeLock" in navigator) { S.wake = await navigator.wakeLock.request("screen"); S.wakeOk = true; S.wake.addEventListener("release", () => { S.wakeOk = false; }); } else S.wakeOk = false; }
+    catch (e) { S.wakeOk = false; }
+    $("st-note").textContent = S.wakeOk ? "" : "画面常時ON失敗";
+  }
+
+  /* ---------- 走行シミュレーション(GPSの誤差・欠測・停車つき) ---------- */
+  function routePath(name) {
+    const towns = GEO.routes[name]; const pts = towns.map((t) => ({ lat: GEO.cent[t][0], lon: GEO.cent[t][1] }));
+    const segs = []; let total = 0;
+    for (let i = 0; i < pts.length - 1; i++) { const d = dist(pts[i], pts[i + 1]); segs.push({ a: pts[i], b: pts[i + 1], d, s0: total }); total += d; }
+    return { segs, total };
+  }
+  function pathAt(path, s) {
+    const seg = path.segs.find((g) => s <= g.s0 + g.d) || path.segs[path.segs.length - 1];
+    const f = Math.min(1, Math.max(0, (s - seg.s0) / seg.d));
+    return { lat: seg.a.lat + (seg.b.lat - seg.a.lat) * f, lon: seg.a.lon + (seg.b.lon - seg.a.lon) * f, brg: bearing(seg.a, seg.b) };
+  }
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  function startSim(route, mult, noisy) {
+    stopSim(); hideAll(); keepAwake(); document.body.classList.remove("drive");
+    const path = routePath(route); let s = 0, t = 0, stopUntil = -1, gapUntil = -1; seed = 7;
+    S.sim = { route, mult: mult || 1 }; S.town = undefined; S.speed = null; S.heading = null; S.trail = [];
+    showMsg(route + "\n出発します");
+    S.sim.timer = setInterval(() => {
+      t += 1;
+      let v = 16.7;   /* 時速60km */
+      if (noisy !== false) {
+        if (t === 90) stopUntil = t + 25;                 /* 信号待ち */
+        if (t === 200) gapUntil = t + 35;                 /* トンネル(測位なし) */
+        if (t > 300 && t % 240 < 50) v = 25;              /* バイパスで時速90km */
+        if (t > 300 && t % 400 > 380) v = 5;              /* 市街地の低速 */
+      }
+      if (t < stopUntil) v = 0;
+      s += v * S.sim.mult;
+      if (s >= path.total) { stopSim(); return; }
+      if (t < gapUntil) return;
+      const p = pathAt(path, s), acc = noisy === false ? 5 : 8 + rnd() * 50, jitter = noisy === false ? 0 : acc / 2.5;
+      const dn = (rnd() - 0.5) * 2 * jitter, de = (rnd() - 0.5) * 2 * jitter;
+      ingest({ lat: p.lat + dn / 110540, lon: p.lon + de / (111320 * Math.cos(p.lat * RAD)), acc, speed: v, heading: v > 1.5 ? p.brg : (noisy === false ? p.brg : null) });
+    }, 1000);
+  }
+  function stopSim() { if (S.sim) { clearInterval(S.sim.timer); S.sim = null; logEv("sim-end"); } }
+
+  /* ---------- 出発前チェック／メニュー／出典 ---------- */
+  async function preflight() {
+    const rows = [];
+    const add = (ok, text) => rows.push("<li class='" + (ok === true ? "ok" : ok === false ? "ng" : "wn") + "'>" + text + "</li>");
+    add(location.protocol === "https:" || location.hostname === "localhost", "https接続（位置情報に必要）");
+    add(!!(navigator.serviceWorker && navigator.serviceWorker.controller), "オフライン保存（Service Worker）が有効");
+    try { const names = await caches.keys(); let n = 0; for (const k of names) n += (await (await caches.open(k)).keys()).length; add(n >= 5, "端末に保存済みのファイル: " + n + "件"); } catch (e) { add(null, "保存状況を確認できません"); }
+    try { add(document.fonts.check("20px DotGothic16"), "ドット文字フォント（同梱）"); } catch (e) { add(null, "フォントを確認できません"); }
+    try { const r = await navigator.permissions.query({ name: "geolocation" }); add(r.state === "granted" ? true : r.state === "denied" ? false : null, "位置情報の許可: " + r.state); } catch (e) { add(null, "位置情報の許可は走行開始時に確認されます"); }
+    add(S.lastAcc != null ? S.lastAcc <= 100 : null, S.lastAcc != null ? "現在地の精度 " + Math.round(S.lastAcc) + "m" : "現在地の精度: 未測定（スタート後に表示）");
+    add(S.wakeOk === true ? true : null, S.wakeOk === true ? "画面常時ON" : "画面常時ON: 走行開始後に確認されます");
+    add(null, "省電力モードはオフに、給電しながら使ってください");
+    add(null, "ホーム画面に追加したあとは、そのアイコンをWi-Fiで一度開いてから機内モードで確認してください");
+    return "<ul class='chk'>" + rows.join("") + "</ul><p>データ版: " + BUILD + "</p>";
+  }
+  function hideAll() { for (const id of ["intro", "menu", "info"]) $(id).hidden = true; }
+  async function openInfo(title, html) { $("info-title").textContent = title; $("info-body").innerHTML = html; $("info").hidden = false; }
+  function menuLabels() {
+    $("m-pass").textContent = "同乗者モード:" + (S.passenger ? "ON(クイズあり)" : "OFF(クイズ停止)");
+    $("m-dim").textContent = "減光:" + (document.body.classList.contains("dim") ? "ON" : "OFF");
+    $("m-speed").textContent = MULT_NAMES[S.mult];
+    $("m-fb").textContent = "評価ボタン:" + (S.showFb ? "表示" : "非表示");
+    $("m-build").textContent = "ビルド " + BUILD;
+    readLog().then((l) => { $("m-logstat").textContent = "保存済みの記録: " + l.length + "件"; });
+  }
+  const ABOUT = "<p>町の紹介文: Wikipedia（日本語版）の記事を要約・引用 CC BY-SA 4.0（記事名と版ID・取得日は data に記録）</p><p>道の駅・名所の位置: © OpenStreetMap contributors (ODbL)、Wikidata (CC0)</p><p>町の境界: 国土数値情報（行政区域データ）を元にした smartnews-smri/japan-topography</p><p>名物・名所の補足: Web上の観光情報（出典URLは sights.json に記録）</p><p>フォント: DotGothic16 (SIL Open Font License 1.1)</p>";
+  async function shareLog() {
+    const l = await readLog(); const text = JSON.stringify({ build: BUILD, ua: navigator.userAgent, events: l });
+    try {
+      const f = new File([text], "machi-aomori-log.json", { type: "application/json" });
+      if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: "まち青森ログ" }); return "共有しました"; }
+    } catch (e) { /* 次の方法へ */ }
+    try { await navigator.clipboard.writeText(text); return "クリップボードにコピーしました"; } catch (e) { /* 次の方法へ */ }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "application/json" })); a.download = "machi-aomori-log.json"; a.click(); return "ダウンロードしました";
+  }
+
+  /* ---------- 操作 ---------- */
+  $("go-gps").onclick = startGps;
+  $("go-check").onclick = async () => openInfo("出発前チェック", await preflight());
+  $("go-sim").onclick = () => { $("intro").hidden = true; $("menu").hidden = false; menuLabels(); };
+  $("info-close").onclick = () => { $("info").hidden = true; };
+  $("b-prev").onclick = () => { if (!S.locked) go(-1); };
+  $("b-next").onclick = () => { if (!S.locked) go(1); };
+  $("b-play").onclick = () => { if (S.locked) return; S.paused = !S.paused; $("b-play").textContent = S.paused ? "▶▶" : "❚❚"; schedule(); };
+  $("b-menu").onclick = () => { if (S.locked) return; $("menu").hidden = false; menuLabels(); };
+  let lockTimer = null;
+  const lockBtn = $("b-lock");
+  function setLock(v) { S.locked = v; lockBtn.classList.toggle("on", v); lockBtn.textContent = v ? "🔓長押し" : "🔒"; }
+  lockBtn.addEventListener("pointerdown", () => { if (S.locked) lockTimer = setTimeout(() => setLock(false), 1200); });
+  const endLock = () => clearTimeout(lockTimer);
+  lockBtn.addEventListener("pointerup", endLock); lockBtn.addEventListener("pointercancel", endLock);
+  lockBtn.addEventListener("click", () => { if (!S.locked) setLock(true); });
+  panelEl.addEventListener("click", () => { if (!S.locked) go(1); });
+  $("m-close").onclick = () => { $("menu").hidden = true; };
+  $("m-pass").onclick = () => { S.passenger = !S.passenger; menuLabels(); };
+  $("m-dim").onclick = () => { document.body.classList.toggle("dim"); menuLabels(); };
+  $("m-speed").onclick = () => { S.mult = (S.mult + 1) % MULTS.length; menuLabels(); schedule(); };
+  $("m-fb").onclick = () => { S.showFb = !S.showFb; $("fb").classList.toggle("on", S.showFb); menuLabels(); };
+  $("m-sim").onclick = () => startSim($("m-route").value, +$("m-mult").value);
+  $("m-simstop").onclick = () => { stopSim(); };
+  $("m-check").onclick = async () => openInfo("出発前チェック", await preflight());
+  $("m-about").onclick = () => openInfo("出典・ライセンス", ABOUT);
+  $("m-share").onclick = async () => { $("m-logstat").textContent = await shareLog(); };
+  $("m-copy").onclick = async () => { try { const l = await readLog(); await navigator.clipboard.writeText(JSON.stringify({ build: BUILD, events: l })); $("m-logstat").textContent = "コピーしました"; } catch (e) { $("m-logstat").textContent = "コピーできませんでした"; } };
+  $("m-clear").onclick = () => {
+    if (!confirm("記録したログをすべて消します。よろしいですか？")) return;
+    flushLog(); try { db.transaction("ev", "readwrite").objectStore("ev").clear(); } catch (e) { /* 無視 */ } menuLabels();
+  };
+  $("m-update").onclick = async () => {
+    try { const r = await navigator.serviceWorker.getRegistration(); if (r) await r.update(); } catch (e) { /* 無視 */ }
+    location.reload();
+  };
+  $("fb").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const p = S.pages[S.idx] || {}; logEv("fb", { v: b.dataset.v, kind: p.alert || (p.q ? "quiz" : "card"), id: p.id || null, town: S.town, pos: S.pos });
+    const old = b.textContent; b.textContent = "記録✔"; setTimeout(() => { b.textContent = old; }, 900);
+  });
+  for (const r of Object.keys(GEO.routes)) $("m-route").add(new Option(r, r));
+  $("buildline").textContent = "ビルド " + BUILD;
+  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 200); });
+  addEventListener("online", () => setStatus("st-note", ""));
+
+  /* ---------- Service Worker ---------- */
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+  /* ---------- 机上テスト用(URLの#autosim=ルート名&mult=1) ---------- */
+  window.__app = { S, ingest, startSim, townAt, readLog, enterTown, TOWNS, GEO };
+  const hm = decodeURIComponent(location.hash).match(/autosim=([^&]+)(?:&mult=(\d+))?(?:&clean=1)?/);
+  if (hm) { window.__log = []; setInterval(() => { $("logdump").textContent = JSON.stringify(window.__log); }, 3000); $("intro").hidden = true; S.gpsMode = false; startSim(hm[1], +(hm[2] || 1), !/clean=1/.test(location.hash)); }
+})();
+</script>
+</body>
+</html>
