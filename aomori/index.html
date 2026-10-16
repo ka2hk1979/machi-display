@@ -24,14 +24,15 @@
   #status { flex:none; display:flex; flex-wrap:wrap; gap:4px 14px; font-size:15px; color:var(--dim); min-height:1.2em; }
   #status b { font-weight:normal; color:var(--ink); } #status .ok{color:var(--ok)} #status .warn{color:var(--warn)}
   body.drive #status { display:none; }
-  #panel { flex:1 1 auto; min-height:0; border-radius:6px; background:var(--panel); border:1px solid #1b1e26; padding:12px 16px 24px; position:relative; overflow:hidden; display:flex; flex-direction:column; gap:8px; }
+  #panel { flex:1 1 auto; min-height:0; border-radius:6px; background:var(--panel); border:1px solid #1b1e26; padding:12px 16px 34px; position:relative; overflow:hidden; display:flex; flex-direction:column; gap:8px; }
   #tag { font-size:18px; letter-spacing:.1em; color:var(--warn); min-height:1.3em; }
   #tag.alert { color:var(--ok); } #tag.title { color:var(--dim); } #tag.warn { color:var(--bad); }
   #screen { flex:1; min-height:0; overflow:hidden; line-height:1.28; white-space:pre-wrap; word-break:break-all; text-shadow:0 0 6px rgba(190,210,255,.3); }
   #screen .hook { color:#fff; margin-bottom:.45em; } #screen .ans { color:var(--warn); margin-top:.5em; }
   #screen .foot { color:var(--dim); margin-top:.7em; }
   #screen.title { color:#fff; } #screen.alert { color:var(--ok); } #screen.alert .hook { color:#fff; }
-  #pager { position:absolute; right:12px; bottom:6px; font-size:14px; color:var(--dim); }
+  #pager { position:absolute; left:16px; bottom:8px; font-size:14px; color:var(--dim); }
+  #here { position:absolute; right:14px; bottom:6px; font-size:18px; color:#d8deea; max-width:70%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #gpsWarn { position:absolute; inset:0; background:rgba(0,0,0,.88); color:var(--bad); display:flex; align-items:center; justify-content:center; text-align:center; font-size:30px; line-height:1.5; padding:20px; z-index:2; }
   #fb { flex:none; display:none; gap:10px; } #fb.on { display:flex; }
   #fb button { flex:1; font:inherit; font-size:18px; padding:12px 6px; border-radius:6px; border:1px solid #31402f; background:#111a14; color:var(--ok); }
@@ -58,7 +59,7 @@
 </head>
 <body class="drive">
 <div id="status"><span>GPS:<b id="st-gps">--</b></span><span>精度:<b id="st-acc">--</b></span><span>向き:<b id="st-dir">--</b></span><span>速度:<b id="st-spd">--</b></span><span><b id="st-note"></b></span></div>
-<div id="panel"><div id="tag" class="title"></div><div id="screen" class="title">GPSを待っています…</div><div id="pager"></div><div id="gpsWarn" hidden>GPS停止中<br>電波の届く場所で再開します</div></div>
+<div id="panel"><div id="tag" class="title"></div><div id="screen" class="title">GPSを待っています…</div><div id="pager"></div><div id="here"></div><div id="gpsWarn" hidden>GPS停止中<br>電波の届く場所で再開します</div></div>
 <div id="fb"><button data-v="へえ！">へえ！</button><button data-v="微妙">微妙</button><button data-v="寄った">寄った</button></div>
 <div id="bar"><button id="b-prev" aria-label="前">◀</button><button id="b-play" aria-label="一時停止">❚❚</button><button id="b-next" aria-label="次">▶</button><button id="b-lock" aria-label="ロック">🔒</button><button id="b-menu" aria-label="メニュー">⋯</button></div>
 
@@ -95,7 +96,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-10-16.1912"></script>
+<script src="data.js?v=2026-10-16.2013"></script>
 <script>
 (() => {
   "use strict";
@@ -107,7 +108,7 @@
   const QUIZ_WAIT = 4000, QUIZ_HOLD = 3500;        /* 問題→答えまで4秒、答えのあと3.5秒は割り込まない */
   const MIN_SHOW = 3000, COOLDOWN = 20000;         /* 割り込みで切り替えるまでの最短表示 / 強制ジャンプの間隔 */
   const AHEAD_LV = [15000, 10000, 5000, 2000, 1000, 500], NEXT_LV = [20000, 10000, 5000];
-  const SLOW = 4.2, FAST = 16.7;                   /* 15km/h, 60km/h (m/s) */
+  const SLOW = 4.2, FAST_ON = 19.4, FAST_OFF = 15.3, ALERT_GAP = 90000;   /* 15km/h(クイズ停止) / 70km/hを超えたら高速、55km/h未満で解除 / 同じ案内ページを再び出すまでの間隔 */
   const WINTER = [11, 12, 1, 2, 3, 4];
   const MULTS = [1, 1.5, 2], MULT_NAMES = ["表示:標準", "表示:ゆっくり", "表示:じっくり"];
   const NAMES = Object.keys(TOWNS);
@@ -118,7 +119,7 @@
     pos: null, trail: [], heading: null, speed: null, lastFix: 0, lastAcc: null,
     alert: { ahead: null, next: null }, levels: {}, pending: {}, lastJump: 0, lastNext: 0,
     passenger: true, showFb: false, locked: false, gpsMode: false, sim: null, wake: null, wakeOk: null,
-    logBuf: [], lastPosLog: 0
+    logBuf: [], lastPosLog: 0, fast: false, alertShown: {}
   };
 
   /* ---------- 幾何 ---------- */
@@ -261,7 +262,12 @@
     return 20;
   }
   const quizOk = () => S.passenger || S.speed == null || S.speed < SLOW;
-  const visible = (p) => p.alert ? !!S.alert[p.alert] : p.q ? quizOk() : true;
+  const visible = (p) => {
+    if (p.alert) return !!S.alert[p.alert] && (p === S.pages[S.idx] || now() - (S.alertShown[p.alert] || 0) > ALERT_GAP);   /* 同じ案内を何度も出さない */
+    if (p.title) return !p.done;                                                                          /* 町名ページは入った時の1回だけ */
+    if (p.q) return quizOk() && !S.fast;
+    return !(S.fast && p.lite === false);                                                                 /* 高速中は代表カードだけ */
+  };
   function step(delta) {
     const n = S.pages.length; if (!n) return;
     let i = S.idx;
@@ -293,14 +299,16 @@
     $("pager").textContent = (vis.indexOf(p) + 1) + "/" + vis.length;
   }
   function showPage(i, why) {
+    S.pages.forEach((q) => { if (q.title && q !== S.pages[i]) q.done = true; });
+    if (S.pages[i].alert) S.alertShown[S.pages[i].alert] = now();
     S.idx = i; S.revealed = false; S.pageSince = now(); render(); schedule(); markSeen(S.pages[i]);
-    const p = S.pages[i]; logEv("page", { kind: p.alert || (p.title ? "title" : p.q ? "quiz" : "card"), id: p.id || null, why: why || "auto" });
+    const p = S.pages[i]; logEv("page", { kind: p.alert || (p.title ? "title" : p.q ? "quiz" : "card"), id: p.id || (p.alert && S.alert[p.alert] ? S.alert[p.alert].hook : null), why: why || "auto", fast: S.fast });
   }
   function pageDelay(p) {
     if (p.title) return 2800;
-    if (p.q) return S.revealed ? 4000 : QUIZ_WAIT + 4000;
+    if (p.q) return S.revealed ? 5500 : QUIZ_WAIT + 5500;
     const c = pageParts(p) || {}; const len = [c.hook, c.body, c.foot].filter(Boolean).join("").length;
-    return Math.max(5000, 2000 + 120 * len) * MULTS[S.mult];
+    return Math.max(7000, 3000 + 150 * len) * MULTS[S.mult];
   }
   function schedule() {
     clearTimeout(S.timer);
@@ -331,31 +339,31 @@
     const visits = rec ? rec.visits + 1 : 1;
     m[name] = { visits, seen: rec ? rec.seen : [] }; saveSeen(m);
     let cards = TOWNS[name].cards.map((c) => ({ ...c, id: name + "#" + hash(c.q || c.hook + c.t) }));
-    if (S.speed != null && S.speed > FAST) {   /* 高速で通過する町は代表カードだけ */
-      const pick = cards.find((c) => c.teaser) || cards.find((c) => !c.q);
-      const other = cards.find((c) => c !== pick && !c.q && !m[name].seen.includes(c.id));
-      cards = [pick, other].filter(Boolean);
-    }
+    /* 高速中に出す代表カード(見出しの1枚+ほか2枚。クイズは除く)。実際に出すかは、その時の速度で決める */
+    const pick = cards.find((c) => c.teaser) || cards.find((c) => !c.q);
+    const lite = new Set([pick, ...cards.filter((c) => c !== pick && !c.q && !m[name].seen.includes(c.id)).slice(0, 2)].filter(Boolean));
+    cards = cards.map((c) => ({ ...c, lite: lite.has(c) }));
     const fresh = cards.filter((c) => !m[name].seen.includes(c.id)), old = cards.filter((c) => m[name].seen.includes(c.id));
     if (!fresh.length) { m[name].seen = []; saveSeen(m); return { cards, visits }; }
     return { cards: [...fresh, ...old], visits };
   }
-  function enterTown(name) {
-    S.town = name; S.levels = {}; S.alert.next = null;
+  function enterTown(name, first) {
+    S.town = name; S.levels = {}; S.alert.next = null; setHere("ここは" + name);
     const { cards } = cardsFor(name);
-    S.cards = cards; S.head = TOWNS[name].pref + "\n" + name + "\nに入りました";
-    logEv("town", { town: name, speed: S.speed });
+    S.cards = cards; S.head = first ? "いまは\n" + TOWNS[name].pref + "\n" + name : TOWNS[name].pref + "\n" + name + "\nに入りました";
+    logEv("town", { town: name, speed: S.speed, first: !!first });
     setPagesFresh();
   }
   function enterNone() {
-    S.town = null; S.levels = {};
+    S.town = null; S.levels = {}; setHere("青森県外・沖合");
     S.cards = GEO.pool.map((c) => ({ ...c, id: "pool#" + hash(c.hook + c.t) })).sort(() => Math.random() - 0.5).slice(0, 4);
     S.head = "いま\n青森県外・沖合"; logEv("town", { town: null });
     setPagesFresh();
   }
+  function setHere(t) { $("here").textContent = t; }
   function applyTown() {
-    const t = S.pend && S.pend.t; S.pend = null;
-    if (t === null) enterNone(); else if (t) enterTown(t);
+    const t = S.pend && S.pend.t, first = S.town === undefined; S.pend = null;
+    if (t === null) enterNone(); else if (t) enterTown(t, first);
   }
   function tickPendingTown() {
     if (!S.pend) return;
@@ -469,6 +477,7 @@
     const here = { lat: c.lat, lon: c.lon };
     S.pos = here; S.lastFix = now(); S.lastAcc = c.acc;
     S.speed = c.speed != null && !isNaN(c.speed) ? c.speed : S.speed;
+    if (S.speed != null) { if (S.speed > FAST_ON) S.fast = true; else if (S.speed < FAST_OFF) S.fast = false; }
     setStatus("st-gps", S.sim ? "SIM" : "OK", S.sim ? "warn" : "ok");
     setStatus("st-acc", Math.round(c.acc) + "m", c.acc > 100 ? "warn" : "");
     setStatus("st-spd", S.speed == null ? "--" : Math.round(S.speed * 3.6) + "km/h");
@@ -490,7 +499,7 @@
     wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
     setInterval(() => { if (S.gpsMode && now() - S.lastFix > 30000) { try { navigator.geolocation.clearWatch(wId); } catch (e) { /* 無視 */ } wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }); S.lastFix = now(); logEv("gps-restart"); } }, 10000);
   }
-  function showMsg(t) { S.head = t; S.cards = []; S.town = undefined; S.pend = null; S.cand = null; S.idx = 0; build(); showPage(0, "msg"); }
+  function showMsg(t) { setHere(""); S.head = t; S.cards = []; S.town = undefined; S.pend = null; S.cand = null; S.idx = 0; build(); showPage(0, "msg"); }
   async function keepAwake() {
     try { if ("wakeLock" in navigator) { S.wake = await navigator.wakeLock.request("screen"); S.wakeOk = true; S.wake.addEventListener("release", () => { S.wakeOk = false; }); } else S.wakeOk = false; }
     catch (e) { S.wakeOk = false; }
