@@ -81,6 +81,10 @@
   <h2>表示</h2>
   <div class="row"><button id="m-pass"></button><button id="m-dim"></button></div>
   <div class="row"><button id="m-speed"></button><button id="m-fb"></button></div>
+  <h2>音声（VOICEVOX:冥鳴ひまり）</h2>
+  <div class="row"><button id="m-voice"></button><button id="m-vmode"></button></div>
+  <div class="row"><button id="m-vdl">音声データを保存</button></div>
+  <p id="m-vstat"></p>
   <h2>走行シミュレーション</h2>
   <div class="row"><select id="m-route"></select><select id="m-mult"><option value="1">等倍</option><option value="5">5倍</option><option value="20">20倍</option></select></div>
   <div class="row"><button id="m-sim">シミュレーション開始</button><button id="m-simstop">止める</button></div>
@@ -96,7 +100,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-10-16.2013"></script>
+<script src="data.js?v=2026-10-16.2118"></script>
 <script>
 (() => {
   "use strict";
@@ -119,7 +123,7 @@
     pos: null, trail: [], heading: null, speed: null, lastFix: 0, lastAcc: null,
     alert: { ahead: null, next: null }, levels: {}, pending: {}, lastJump: 0, lastNext: 0,
     passenger: true, showFb: false, locked: false, gpsMode: false, sim: null, wake: null, wakeOk: null,
-    logBuf: [], lastPosLog: 0, fast: false, alertShown: {}
+    logBuf: [], lastPosLog: 0, fast: false, alertShown: {}, voice: 0, vmode: "mix", titleKeys: null
   };
 
   /* ---------- 幾何 ---------- */
@@ -294,7 +298,7 @@
       if (!c[cls]) continue;
       const d = document.createElement("div"); d.className = cls; d.textContent = c[cls]; d.style.fontSize = Math.round(fs * k) + "px"; screenEl.appendChild(d);
     }
-    if (p.q && !S.revealed) S.qTimer = setTimeout(() => { S.revealed = true; render(); schedule(); }, QUIZ_WAIT);
+    if (p.q && !S.revealed) S.qTimer = setTimeout(() => { S.revealed = true; render(); schedule(); if (S.voice >= 2) vSay([p.id + "/a"]); }, qWait(p));
     const vis = S.pages.filter(visible);
     $("pager").textContent = (vis.indexOf(p) + 1) + "/" + vis.length;
   }
@@ -303,12 +307,14 @@
     if (S.pages[i].alert) S.alertShown[S.pages[i].alert] = now();
     S.idx = i; S.revealed = false; S.pageSince = now(); render(); schedule(); markSeen(S.pages[i]);
     const p = S.pages[i]; logEv("page", { kind: p.alert || (p.title ? "title" : p.q ? "quiz" : "card"), id: p.id || (p.alert && S.alert[p.alert] ? S.alert[p.alert].hook : null), why: why || "auto", fast: S.fast });
+    speakPage(p);
   }
   function pageDelay(p) {
-    if (p.title) return 2800;
-    if (p.q) return S.revealed ? 5500 : QUIZ_WAIT + 5500;
+    const vs = vDur(pageKeys(p)) * 1000;   /* 音声があるときは、読み終わるまで次へ進まない */
+    if (p.title) return Math.max(2800, vs ? vs + 1000 : 0);
+    if (p.q) return S.revealed ? Math.max(5500, vDur([p.id + "/a"]) * 1000 + 2500) : qWait(p) + 5500;
     const c = pageParts(p) || {}; const len = [c.hook, c.body, c.foot].filter(Boolean).join("").length;
-    return Math.max(7000, 3000 + 150 * len) * MULTS[S.mult];
+    return Math.max(Math.max(7000, 3000 + 150 * len) * MULTS[S.mult], vs ? vs + 1500 : 0);
   }
   function schedule() {
     clearTimeout(S.timer);
@@ -351,13 +357,14 @@
     S.town = name; S.levels = {}; S.alert.next = null; setHere("ここは" + name);
     const { cards } = cardsFor(name);
     S.cards = cards; S.head = first ? "いまは\n" + TOWNS[name].pref + "\n" + name : TOWNS[name].pref + "\n" + name + "\nに入りました";
+    S.titleKeys = first ? ["lead:now", "town:" + name, "lead:desu"] : ["town:" + name, "lead:hairimashita"];
     logEv("town", { town: name, speed: S.speed, first: !!first });
     setPagesFresh();
   }
   function enterNone() {
     S.town = null; S.levels = {}; setHere("青森県外・沖合");
     S.cards = GEO.pool.map((c) => ({ ...c, id: "pool#" + hash(c.hook + c.t) })).sort(() => Math.random() - 0.5).slice(0, 4);
-    S.head = "いま\n青森県外・沖合"; logEv("town", { town: null });
+    S.head = "いま\n青森県外・沖合"; S.titleKeys = ["lead:kengai"]; logEv("town", { town: null });
     setPagesFresh();
   }
   function setHere(t) { $("here").textContent = t; }
@@ -384,7 +391,7 @@
   /* ---------- 割り込みの調停 ---------- */
   function quizProtected() {
     const p = S.pages[S.idx];
-    return !!(p && p.q && now() - S.pageSince < QUIZ_WAIT + QUIZ_HOLD);
+    return !!(p && p.q && now() - S.pageSince < qWait(p) + holdMs(p));
   }
   function canInterrupt(checkCooldown) {
     if (quizProtected()) return false;
@@ -442,7 +449,7 @@
     if (sub) body += "\n" + sub;
     const winter = WINTER.includes(new Date().getMonth() + 1);
     if (winter && ((a.type === "名所" && it.season === "冬季閉鎖") || it.winter)) body += "\n※冬は閉鎖・通行止めの可能性あり";
-    S.alert.ahead = { tag: a.type, hook: it.name, body, foot: b ? "その先：" + b.it.name + " " + fmtDist(b.eff) : "" };
+    S.alert.ahead = { tag: a.type, hook: it.name, body, foot: b ? "その先：" + b.it.name + " " + fmtDist(b.eff) : "", vk: (a.type === "道の駅" ? "e:" : "s:") + it.id, vlead: leadAhead(a.eff) };
     const lv = AHEAD_LV.filter((t) => a.eff <= t).length;
     if (lv > (S.levels["ahead:" + it.id] || 0)) requestInterrupt("ahead", it.id, lv);
     else if (S.pages[S.idx] && S.pages[S.idx].alert === "ahead") render();
@@ -459,7 +466,7 @@
     }
     if (!found || found.d > 20000) { S.alert.next = null; return; }   /* 次の町は20km以内になってから案内する */
     const tz = TOWNS[found.t].cards.find((c) => c.teaser) || TOWNS[found.t].cards.find((c) => c.hook);
-    S.alert.next = { tag: "次の町", hook: found.t, body: "あと" + fmtDist(found.d) + fmtEta(found.d), foot: tz ? "見どころ：" + (tz.hook || tz.q) : "" };
+    S.alert.next = { tag: "次の町", hook: found.t, body: "あと" + fmtDist(found.d) + fmtEta(found.d), foot: tz ? "見どころ：" + (tz.hook || tz.q) : "", vk: [leadNext(found.d), "town:" + found.t, "lead:desu"] };
     const lv = NEXT_LV.filter((t) => found.d <= t).length;
     if (lv > (S.levels["next:" + found.t] || 0)) requestInterrupt("next", found.t, lv);
     else if (S.pages[S.idx] && S.pages[S.idx].alert === "next") render();
@@ -499,7 +506,7 @@
     wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
     setInterval(() => { if (S.gpsMode && now() - S.lastFix > 30000) { try { navigator.geolocation.clearWatch(wId); } catch (e) { /* 無視 */ } wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }); S.lastFix = now(); logEv("gps-restart"); } }, 10000);
   }
-  function showMsg(t) { setHere(""); S.head = t; S.cards = []; S.town = undefined; S.pend = null; S.cand = null; S.idx = 0; build(); showPage(0, "msg"); }
+  function showMsg(t) { setHere(""); S.titleKeys = null; S.head = t; S.cards = []; S.town = undefined; S.pend = null; S.cand = null; S.idx = 0; build(); showPage(0, "msg"); }
   async function keepAwake() {
     try { if ("wakeLock" in navigator) { S.wake = await navigator.wakeLock.request("screen"); S.wakeOk = true; S.wake.addEventListener("release", () => { S.wakeOk = false; }); } else S.wakeOk = false; }
     catch (e) { S.wakeOk = false; }
@@ -555,6 +562,7 @@
     try { const r = await navigator.permissions.query({ name: "geolocation" }); add(r.state === "granted" ? true : r.state === "denied" ? false : null, "位置情報の許可: " + r.state); } catch (e) { add(null, "位置情報の許可は走行開始時に確認されます"); }
     add(S.lastAcc != null ? S.lastAcc <= 100 : null, S.lastAcc != null ? "現在地の精度 " + Math.round(S.lastAcc) + "m" : "現在地の精度: 未測定（スタート後に表示）");
     add(S.wakeOk === true ? true : null, S.wakeOk === true ? "画面常時ON" : "画面常時ON: 走行開始後に確認されます");
+    try { const v = await vStatus(); add(v.total && v.have === v.total ? true : null, v.total ? "音声データ（任意）: " + v.have + "/" + v.total + "保存済み" : "音声データ（任意）: 未取得"); } catch (e) { /* 無視 */ }
     add(null, "省電力モードはオフに、給電しながら使ってください");
     add(null, "ホーム画面に追加したあとは、そのアイコンをWi-Fiで一度開いてから機内モードで確認してください");
     return "<ul class='chk'>" + rows.join("") + "</ul><p>データ版: " + BUILD + "</p>";
@@ -566,10 +574,13 @@
     $("m-dim").textContent = "減光:" + (document.body.classList.contains("dim") ? "ON" : "OFF");
     $("m-speed").textContent = MULT_NAMES[S.mult];
     $("m-fb").textContent = "評価ボタン:" + (S.showFb ? "表示" : "非表示");
+    $("m-voice").textContent = VNAMES[S.voice];
+    $("m-vmode").textContent = S.vmode === "mix" ? "音の出し方:他の音と混ぜる" : "音の出し方:優先して鳴らす";
+    vStatus().then((v) => { $("m-vstat").textContent = v.total ? "音声データ: " + v.have + "/" + v.total + "ファイル保存済み" + (v.have < v.total ? "（Wi-Fiで保存ボタンを押してください）" : "") : "音声データ: 未取得（Wi-Fiで保存ボタンを押してください）"; });
     $("m-build").textContent = "ビルド " + BUILD;
     readLog().then((l) => { $("m-logstat").textContent = "保存済みの記録: " + l.length + "件"; });
   }
-  const ABOUT = "<p>町の紹介文: Wikipedia（日本語版）の記事を要約・引用 CC BY-SA 4.0（記事名と版ID・取得日は data に記録）</p><p>道の駅・名所の位置: © OpenStreetMap contributors (ODbL)、Wikidata (CC0)</p><p>町の境界: 国土数値情報（行政区域データ）を元にした smartnews-smri/japan-topography</p><p>名物・名所の補足: Web上の観光情報（出典URLは sights.json に記録）</p><p>フォント: DotGothic16 (SIL Open Font License 1.1)</p>";
+  const ABOUT = "<p>町の紹介文: Wikipedia（日本語版）の記事を要約・引用 CC BY-SA 4.0（記事名と版ID・取得日は data に記録）</p><p>道の駅・名所の位置: © OpenStreetMap contributors (ODbL)、Wikidata (CC0)</p><p>町の境界: 国土数値情報（行政区域データ）を元にした smartnews-smri/japan-topography</p><p>名物・名所の補足: Web上の観光情報（出典URLは sights.json に記録）</p><p>フォント: DotGothic16 (SIL Open Font License 1.1)</p><p>音声: VOICEVOX:冥鳴ひまり（VOICEVOXで作成した音声ファイルを同梱）</p>";
   async function shareLog() {
     const l = await readLog(); const text = JSON.stringify({ build: BUILD, ua: navigator.userAgent, events: l });
     try {
@@ -580,14 +591,113 @@
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "application/json" })); a.download = "machi-aomori-log.json"; a.click(); return "ダウンロードしました";
   }
 
+  /* ---------- 音声(VOICEVOX:冥鳴ひまり。あらかじめ作った音声ファイルを再生するので通信は不要) ---------- */
+  const VNAMES = ["音声:オフ", "音声:案内だけ", "音声:すべて"], VCACHE = "voice-aomori-v1";
+  const VOICE = { idx: null, loading: null, urls: {}, el: null, tok: 0 };
+  try { S.voice = Math.min(2, Math.max(0, +(localStorage.getItem("aomoriVoice") || 0))); S.vmode = localStorage.getItem("aomoriVMode") === "first" ? "first" : "mix"; } catch (e) { /* 既定のまま */ }
+  function vSave() { try { localStorage.setItem("aomoriVoice", S.voice); localStorage.setItem("aomoriVMode", S.vmode); } catch (e) { /* 無視 */ } }
+  function vInit() {
+    if (VOICE.idx) return Promise.resolve(VOICE.idx);
+    return VOICE.loading || (VOICE.loading = fetch("audio/index.json?v=" + BUILD).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then((j) => (VOICE.idx = j)).catch(() => { VOICE.loading = null; return null; }));
+  }
+  function vSession() { try { if (navigator.audioSession) navigator.audioSession.type = S.vmode === "mix" ? "ambient" : "playback"; } catch (e) { /* 非対応 */ } }
+  function silentWav() {
+    const n = 2400, b = new Uint8Array(44 + n * 2), v = new DataView(b.buffer), w = (o, t) => { for (let i = 0; i < t.length; i++) b[o + i] = t.charCodeAt(i); };
+    w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 24000, true); v.setUint32(28, 48000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+    return URL.createObjectURL(new Blob([b], { type: "audio/wav" }));
+  }
+  function vUnlock() {   /* iPhoneは、画面をタップした操作のなかで一度鳴らしておくと、あとから自動で鳴らせる */
+    vSession();
+    if (!VOICE.el) { const a = new Audio(); a.preload = "auto"; a.setAttribute("playsinline", ""); VOICE.el = a; try { a.src = silentWav(); const pr = a.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) { /* 無視 */ } }
+    if (S.voice) vInit();
+  }
+  function vStop() { VOICE.tok++; try { if (VOICE.el) VOICE.el.pause(); } catch (e) { /* 無視 */ } }
+  function vDur(keys) {
+    if (!S.voice || !VOICE.idx || !keys || !keys.length) return 0;
+    let d = 0, n = 0; for (const k of keys) { const c = VOICE.idx.clips[k]; if (c) { d += c[2]; n++; } }
+    return n ? d + 0.3 * (n - 1) : 0;
+  }
+  function vFile(name) {
+    if (VOICE.urls[name]) return VOICE.urls[name];
+    const f = VOICE.idx.files[name].f;
+    return (VOICE.urls[name] = fetch("audio/" + f).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((buf) => URL.createObjectURL(new Blob([buf], { type: "audio/mp4" }))).catch((e) => { delete VOICE.urls[name]; throw e; }));
+  }
+  function vPlay(url, start, dur, tok) {
+    return new Promise((res) => {
+      if (window.__voiceFake) { setTimeout(res, dur * 1000); return; }   /* 机上テスト用: 実際には鳴らさず時間だけ使う */
+      const a = VOICE.el; if (!a) return res();
+      const go = () => {
+        try { a.currentTime = start; } catch (e) { /* 無視 */ }
+        const pr = a.play();
+        const run = () => {
+          const t0 = performance.now();
+          const iv = setInterval(() => {
+            if (tok !== VOICE.tok || a.currentTime >= start + dur + 0.05 || performance.now() - t0 > (dur + 4) * 1000) { clearInterval(iv); try { a.pause(); } catch (e) { /* 無視 */ } res(); }
+          }, 40);
+        };
+        if (pr && pr.then) pr.then(run).catch((e) => { logEv("voice-err", { e: String(e && e.name || e) }); res(); }); else run();
+      };
+      if (a.src !== url) { a.addEventListener("loadedmetadata", go, { once: true }); a.src = url; a.load(); } else go();
+    });
+  }
+  async function vSay(keys) {
+    const tok = ++VOICE.tok; try { if (VOICE.el) VOICE.el.pause(); } catch (e) { /* 無視 */ }
+    if (!keys || !keys.length || !S.voice) return;
+    const idx = VOICE.idx || await vInit(); if (!idx || tok !== VOICE.tok) return;
+    logEv("voice", { k: keys[keys.length > 1 && /^lead:/.test(keys[0]) ? 1 : 0] });
+    for (const k of keys) {
+      if (tok !== VOICE.tok) return;
+      const c = idx.clips[k]; if (!c) continue;
+      let url; try { url = await vFile(c[0]); } catch (e) { logEv("voice-err", { e: "file " + c[0] }); return; }
+      if (tok !== VOICE.tok) return;
+      await vPlay(url, c[1], c[2], tok);
+      if (tok === VOICE.tok) await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  function leadAhead(d) {
+    if (d < 300) return "lead:soon";
+    if (d < 1000) return "lead:ahead:m" + Math.min(900, Math.max(100, Math.round(d / 100) * 100));
+    const km = d / 1000, v = km < 10 ? Math.round(km * 2) / 2 : [10, 12, 15, 20].reduce((a, b) => (Math.abs(b - km) < Math.abs(a - km) ? b : a));
+    return "lead:ahead:k" + String(v).replace(".", "_");
+  }
+  function leadNext(d) { return d < 1000 ? "lead:next:soon" : "lead:next:k" + Math.min(20, Math.max(1, Math.round(d / 1000))); }
+  function pageKeys(p) {
+    if (!S.voice || !p) return null;
+    if (p.title) return S.titleKeys;
+    if (p.alert === "ahead") { const a = S.alert.ahead; return a && a.vk ? [a.vlead, a.vk] : null; }
+    if (p.alert === "next") { const a = S.alert.next; return a && a.vk ? a.vk : null; }
+    if (S.voice < 2) return null;
+    if (p.q) return [p.id + "/q"];
+    return p.id ? [p.id] : null;
+  }
+  function speakPage(p) { const keys = pageKeys(p); if (keys) vSay(keys); else vStop(); }
+  function qWait(p) { return S.voice >= 2 && p && p.id && VOICE.idx && VOICE.idx.clips[p.id + "/q"] ? Math.max(QUIZ_WAIT, vDur([p.id + "/q"]) * 1000 + 3500) : QUIZ_WAIT; }
+  function holdMs(p) { return S.voice >= 2 && p && p.id ? Math.max(QUIZ_HOLD, vDur([p.id + "/a"]) * 1000 + 1500) : QUIZ_HOLD; }
+  async function vStatus() {
+    const idx = await vInit(); if (!idx) return { have: 0, total: 0 };
+    let have = 0; const names = Object.keys(idx.files);
+    try { const c = await caches.open(VCACHE); for (const n of names) if (await c.match("audio/" + idx.files[n].f)) have++; } catch (e) { /* 無視 */ }
+    return { have, total: names.length };
+  }
+  async function vDownload() {
+    const idx = await vInit(); if (!idx) { $("m-vstat").textContent = "音声データを取得できません。Wi-Fiにつないでください"; return; }
+    const names = Object.keys(idx.files); let done = 0, bytes = 0;
+    for (const n of names) {
+      try { const r = await fetch("audio/" + idx.files[n].f); if (!r.ok) throw new Error(r.status); bytes += (await r.arrayBuffer()).byteLength; done++; } catch (e) { /* あとで数える */ }
+      $("m-vstat").textContent = "保存中 " + done + "/" + names.length;
+    }
+    $("m-vstat").textContent = done === names.length ? "保存しました（" + done + "ファイル、約" + Math.round(bytes / 1e6) + "MB）" : "一部保存できませんでした（" + done + "/" + names.length + "）。もう一度押してください";
+  }
+
   /* ---------- 操作 ---------- */
-  $("go-gps").onclick = startGps;
+  $("go-gps").onclick = () => { vUnlock(); startGps(); };
   $("go-check").onclick = async () => openInfo("出発前チェック", await preflight());
   $("go-sim").onclick = () => { $("intro").hidden = true; $("menu").hidden = false; menuLabels(); };
   $("info-close").onclick = () => { $("info").hidden = true; };
   $("b-prev").onclick = () => { if (!S.locked) go(-1); };
   $("b-next").onclick = () => { if (!S.locked) go(1); };
-  $("b-play").onclick = () => { if (S.locked) return; S.paused = !S.paused; $("b-play").textContent = S.paused ? "▶▶" : "❚❚"; schedule(); };
+  $("b-play").onclick = () => { if (S.locked) return; S.paused = !S.paused; $("b-play").textContent = S.paused ? "▶▶" : "❚❚"; if (S.paused) vStop(); schedule(); };
   $("b-menu").onclick = () => { if (S.locked) return; $("menu").hidden = false; menuLabels(); };
   let lockTimer = null;
   const lockBtn = $("b-lock");
@@ -602,7 +712,13 @@
   $("m-dim").onclick = () => { document.body.classList.toggle("dim"); menuLabels(); };
   $("m-speed").onclick = () => { S.mult = (S.mult + 1) % MULTS.length; menuLabels(); schedule(); };
   $("m-fb").onclick = () => { S.showFb = !S.showFb; $("fb").classList.toggle("on", S.showFb); menuLabels(); };
-  $("m-sim").onclick = () => startSim($("m-route").value, +$("m-mult").value);
+  $("m-sim").onclick = () => { vUnlock(); startSim($("m-route").value, +$("m-mult").value); };
+  $("m-voice").onclick = () => {
+    S.voice = (S.voice + 1) % 3; vSave(); vUnlock(); menuLabels();
+    if (S.voice) { vInit().then(() => vSay(["lead:now", "town:弘前市", "lead:desu"])); } else vStop();
+  };
+  $("m-vmode").onclick = () => { S.vmode = S.vmode === "mix" ? "first" : "mix"; vSave(); vSession(); menuLabels(); };
+  $("m-vdl").onclick = vDownload;
   $("m-simstop").onclick = () => { stopSim(); };
   $("m-check").onclick = async () => openInfo("出発前チェック", await preflight());
   $("m-about").onclick = () => openInfo("出典・ライセンス", ABOUT);
@@ -643,7 +759,8 @@
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
   /* ---------- 机上テスト用(URLの#autosim=ルート名&mult=1) ---------- */
-  window.__app = { S, ingest, startSim, townAt, readLog, enterTown, TOWNS, GEO };
+  window.__app = { S, ingest, startSim, townAt, readLog, enterTown, TOWNS, GEO, vSay, vInit, VOICE, vUnlock };
+  const vm = decodeURIComponent(location.hash).match(/voice=(\d)/); if (vm) { S.voice = +vm[1]; window.__voiceFake = true; vInit(); }
   const hm = decodeURIComponent(location.hash).match(/autosim=([^&]+)(?:&mult=(\d+))?(?:&clean=1)?/);
   if (hm) { window.__log = []; setInterval(() => { $("logdump").textContent = JSON.stringify(window.__log); }, 3000); $("intro").hidden = true; S.gpsMode = false; startSim(hm[1], +(hm[2] || 1), !/clean=1/.test(location.hash)); }
 })();
