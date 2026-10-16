@@ -83,7 +83,6 @@
   <div class="row"><button id="m-speed"></button><button id="m-fb"></button></div>
   <h2>音声（VOICEVOX:冥鳴ひまり）</h2>
   <div class="row"><button id="m-voice"></button><button id="m-vmode"></button></div>
-  <div class="row"><button id="m-vdl">音声データを保存</button></div>
   <p id="m-vstat"></p>
   <h2>走行シミュレーション</h2>
   <div class="row"><select id="m-route"></select><select id="m-mult"><option value="1">等倍</option><option value="5">5倍</option><option value="20">20倍</option></select></div>
@@ -100,7 +99,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-10-16.2118"></script>
+<script src="data.js?v=2026-10-16.2253"></script>
 <script>
 (() => {
   "use strict";
@@ -357,7 +356,7 @@
     S.town = name; S.levels = {}; S.alert.next = null; setHere("ここは" + name);
     const { cards } = cardsFor(name);
     S.cards = cards; S.head = first ? "いまは\n" + TOWNS[name].pref + "\n" + name : TOWNS[name].pref + "\n" + name + "\nに入りました";
-    S.titleKeys = first ? ["lead:now", "town:" + name, "lead:desu"] : ["town:" + name, "lead:hairimashita"];
+    S.titleKeys = [(first ? "title:now:" : "title:in:") + name];
     logEv("town", { town: name, speed: S.speed, first: !!first });
     setPagesFresh();
   }
@@ -466,7 +465,7 @@
     }
     if (!found || found.d > 20000) { S.alert.next = null; return; }   /* 次の町は20km以内になってから案内する */
     const tz = TOWNS[found.t].cards.find((c) => c.teaser) || TOWNS[found.t].cards.find((c) => c.hook);
-    S.alert.next = { tag: "次の町", hook: found.t, body: "あと" + fmtDist(found.d) + fmtEta(found.d), foot: tz ? "見どころ：" + (tz.hook || tz.q) : "", vk: [leadNext(found.d), "town:" + found.t, "lead:desu"] };
+    S.alert.next = { tag: "次の町", hook: found.t, body: "あと" + fmtDist(found.d) + fmtEta(found.d), foot: tz ? "見どころ：" + (tz.hook || tz.q) : "", vk: [nextKey(found.d, found.t)] };
     const lv = NEXT_LV.filter((t) => found.d <= t).length;
     if (lv > (S.levels["next:" + found.t] || 0)) requestInterrupt("next", found.t, lv);
     else if (S.pages[S.idx] && S.pages[S.idx].alert === "next") render();
@@ -565,9 +564,13 @@
     try { const v = await vStatus(); add(v.total && v.have === v.total ? true : null, v.total ? "音声データ（任意）: " + v.have + "/" + v.total + "保存済み" : "音声データ（任意）: 未取得"); } catch (e) { /* 無視 */ }
     add(null, "省電力モードはオフに、給電しながら使ってください");
     add(null, "ホーム画面に追加したあとは、そのアイコンをWi-Fiで一度開いてから機内モードで確認してください");
-    return "<ul class='chk'>" + rows.join("") + "</ul><p>データ版: " + BUILD + "</p>";
+    return "<ul class='chk'>" + rows.join("") + "</ul><h2>音声データ（音声を使う場合）</h2><div class='row'><button id='pf-vdl' class='main'>音声データを保存（約25MB・Wi-Fiで）</button></div><p id='pf-vstat'></p><p>データ版: " + BUILD + "</p>";
   }
   function hideAll() { for (const id of ["intro", "menu", "info"]) $(id).hidden = true; }
+  async function openCheck() {   /* 出発前チェック。音声データの保存もここから */
+    await openInfo("出発前チェック", await preflight());
+    const b = $("pf-vdl"); if (b) b.onclick = vDownload;
+  }
   async function openInfo(title, html) { $("info-title").textContent = title; $("info-body").innerHTML = html; $("info").hidden = false; }
   function menuLabels() {
     $("m-pass").textContent = "同乗者モード:" + (S.passenger ? "ON(クイズあり)" : "OFF(クイズ停止)");
@@ -576,7 +579,7 @@
     $("m-fb").textContent = "評価ボタン:" + (S.showFb ? "表示" : "非表示");
     $("m-voice").textContent = VNAMES[S.voice];
     $("m-vmode").textContent = S.vmode === "mix" ? "音の出し方:他の音と混ぜる" : "音の出し方:優先して鳴らす";
-    vStatus().then((v) => { $("m-vstat").textContent = v.total ? "音声データ: " + v.have + "/" + v.total + "ファイル保存済み" + (v.have < v.total ? "（Wi-Fiで保存ボタンを押してください）" : "") : "音声データ: 未取得（Wi-Fiで保存ボタンを押してください）"; });
+    vStatus().then((v) => { $("m-vstat").textContent = v.total ? "音声データ: " + v.have + "/" + v.total + "ファイル保存済み" + (v.have < v.total ? "（「出発前チェック」で保存できます）" : "") : "音声データ: 未取得（「出発前チェック」で保存できます）"; });
     $("m-build").textContent = "ビルド " + BUILD;
     readLog().then((l) => { $("m-logstat").textContent = "保存済みの記録: " + l.length + "件"; });
   }
@@ -593,7 +596,7 @@
 
   /* ---------- 音声(VOICEVOX:冥鳴ひまり。あらかじめ作った音声ファイルを再生するので通信は不要) ---------- */
   const VNAMES = ["音声:オフ", "音声:案内だけ", "音声:すべて"], VCACHE = "voice-aomori-v1";
-  const VOICE = { idx: null, loading: null, urls: {}, el: null, tok: 0 };
+  const VOICE = { idx: null, loading: null, urls: {}, els: null, tok: 0 };
   try { S.voice = Math.min(2, Math.max(0, +(localStorage.getItem("aomoriVoice") || 0))); S.vmode = localStorage.getItem("aomoriVMode") === "first" ? "first" : "mix"; } catch (e) { /* 既定のまま */ }
   function vSave() { try { localStorage.setItem("aomoriVoice", S.voice); localStorage.setItem("aomoriVMode", S.vmode); } catch (e) { /* 無視 */ } }
   function vInit() {
@@ -609,50 +612,63 @@
   }
   function vUnlock() {   /* iPhoneは、画面をタップした操作のなかで一度鳴らしておくと、あとから自動で鳴らせる */
     vSession();
-    if (!VOICE.el) { const a = new Audio(); a.preload = "auto"; a.setAttribute("playsinline", ""); VOICE.el = a; try { a.src = silentWav(); const pr = a.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) { /* 無視 */ } }
+    if (!VOICE.els) {
+      VOICE.els = [new Audio(), new Audio()];
+      for (const a of VOICE.els) { a.preload = "auto"; a.setAttribute("playsinline", ""); try { a.src = silentWav(); const pr = a.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) { /* 無視 */ } }
+    }
     if (S.voice) vInit();
   }
-  function vStop() { VOICE.tok++; try { if (VOICE.el) VOICE.el.pause(); } catch (e) { /* 無視 */ } }
+  function vPauseAll() { try { for (const a of VOICE.els || []) a.pause(); } catch (e) { /* 無視 */ } }
+  function vStop() { VOICE.tok++; vPauseAll(); }
   function vDur(keys) {
     if (!S.voice || !VOICE.idx || !keys || !keys.length) return 0;
     let d = 0, n = 0; for (const k of keys) { const c = VOICE.idx.clips[k]; if (c) { d += c[2]; n++; } }
-    return n ? d + 0.3 * (n - 1) : 0;
+    return n ? d + 0.1 * (n - 1) : 0;
   }
   function vFile(name) {
     if (VOICE.urls[name]) return VOICE.urls[name];
     const f = VOICE.idx.files[name].f;
     return (VOICE.urls[name] = fetch("audio/" + f).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((buf) => URL.createObjectURL(new Blob([buf], { type: "audio/mp4" }))).catch((e) => { delete VOICE.urls[name]; throw e; }));
   }
-  function vPlay(url, start, dur, tok) {
+  /* 次の音声を、別のaudio要素に先に読み込んで頭出ししておく(つなぎ目のすき間を減らす) */
+  function vReady(a, url, start) {
+    return (a._ready = new Promise((res) => {
+      const seek = () => { if (Math.abs(a.currentTime - start) < 0.02) return res(); const done = () => { clearTimeout(t); res(); }; const t = setTimeout(res, 600); a.addEventListener("seeked", done, { once: true }); try { a.currentTime = start; } catch (e) { res(); } };
+      if (a.src !== url) { const t = setTimeout(res, 3000); a.addEventListener("loadedmetadata", () => { clearTimeout(t); seek(); }, { once: true }); a.src = url; a.load(); } else seek();
+    }));
+  }
+  function vPlay(a, dur, start, tok) {
     return new Promise((res) => {
-      if (window.__voiceFake) { setTimeout(res, dur * 1000); return; }   /* 机上テスト用: 実際には鳴らさず時間だけ使う */
-      const a = VOICE.el; if (!a) return res();
-      const go = () => {
-        try { a.currentTime = start; } catch (e) { /* 無視 */ }
-        const pr = a.play();
-        const run = () => {
-          const t0 = performance.now();
-          const iv = setInterval(() => {
-            if (tok !== VOICE.tok || a.currentTime >= start + dur + 0.05 || performance.now() - t0 > (dur + 4) * 1000) { clearInterval(iv); try { a.pause(); } catch (e) { /* 無視 */ } res(); }
-          }, 40);
-        };
-        if (pr && pr.then) pr.then(run).catch((e) => { logEv("voice-err", { e: String(e && e.name || e) }); res(); }); else run();
+      const pr = a.play();
+      const run = () => {
+        const t0 = performance.now();
+        const iv = setInterval(() => {
+          if (tok !== VOICE.tok || a.currentTime >= start + dur - 0.02 || performance.now() - t0 > (dur + 4) * 1000) { clearInterval(iv); try { a.pause(); } catch (e) { /* 無視 */ } res(); }
+        }, 25);
       };
-      if (a.src !== url) { a.addEventListener("loadedmetadata", go, { once: true }); a.src = url; a.load(); } else go();
+      if (pr && pr.then) pr.then(run).catch((e) => { logEv("voice-err", { e: String(e && e.name || e) }); res(); }); else run();
     });
   }
   async function vSay(keys) {
-    const tok = ++VOICE.tok; try { if (VOICE.el) VOICE.el.pause(); } catch (e) { /* 無視 */ }
+    const tok = ++VOICE.tok; vPauseAll();
     if (!keys || !keys.length || !S.voice) return;
     const idx = VOICE.idx || await vInit(); if (!idx || tok !== VOICE.tok) return;
     logEv("voice", { k: keys[keys.length > 1 && /^lead:/.test(keys[0]) ? 1 : 0] });
+    const list = [];
     for (const k of keys) {
-      if (tok !== VOICE.tok) return;
       const c = idx.clips[k]; if (!c) continue;
-      let url; try { url = await vFile(c[0]); } catch (e) { logEv("voice-err", { e: "file " + c[0] }); return; }
+      try { list.push({ url: await vFile(c[0]), start: c[1], dur: c[2] }); } catch (e) { logEv("voice-err", { e: "file " + c[0] }); return; }
       if (tok !== VOICE.tok) return;
-      await vPlay(url, c[1], c[2], tok);
-      if (tok === VOICE.tok) await new Promise((r) => setTimeout(r, 150));
+    }
+    if (window.__voiceFake) { for (const it of list) { await new Promise((r) => setTimeout(r, it.dur * 1000)); if (tok !== VOICE.tok) return; } return; }   /* 机上テスト用: 実際には鳴らさず時間だけ使う */
+    if (!VOICE.els || !list.length) return;
+    vReady(VOICE.els[0], list[0].url, list[0].start);
+    for (let i = 0; i < list.length; i++) {
+      const a = VOICE.els[i % 2], it = list[i];
+      await a._ready; if (tok !== VOICE.tok) return;
+      if (i + 1 < list.length) vReady(VOICE.els[(i + 1) % 2], list[i + 1].url, list[i + 1].start);
+      await vPlay(a, it.dur, it.start, tok);
+      if (tok !== VOICE.tok) return;
     }
   }
   function leadAhead(d) {
@@ -661,7 +677,7 @@
     const km = d / 1000, v = km < 10 ? Math.round(km * 2) / 2 : [10, 12, 15, 20].reduce((a, b) => (Math.abs(b - km) < Math.abs(a - km) ? b : a));
     return "lead:ahead:k" + String(v).replace(".", "_");
   }
-  function leadNext(d) { return d < 1000 ? "lead:next:soon" : "lead:next:k" + Math.min(20, Math.max(1, Math.round(d / 1000))); }
+  function nextKey(d, town) { return d < 1000 ? "next:soon:" + town : "next:" + [5, 10, 15, 20].reduce((a, b) => (Math.abs(b - d / 1000) < Math.abs(a - d / 1000) ? b : a)) + ":" + town; }
   function pageKeys(p) {
     if (!S.voice || !p) return null;
     if (p.title) return S.titleKeys;
@@ -680,19 +696,20 @@
     try { const c = await caches.open(VCACHE); for (const n of names) if (await c.match("audio/" + idx.files[n].f)) have++; } catch (e) { /* 無視 */ }
     return { have, total: names.length };
   }
+  function setVStat(t) { for (const id of ["m-vstat", "pf-vstat"]) { const el = $(id); if (el) el.textContent = t; } }
   async function vDownload() {
-    const idx = await vInit(); if (!idx) { $("m-vstat").textContent = "音声データを取得できません。Wi-Fiにつないでください"; return; }
+    const idx = await vInit(); if (!idx) { setVStat("音声データを取得できません。Wi-Fiにつないでください"); return; }
     const names = Object.keys(idx.files); let done = 0, bytes = 0;
     for (const n of names) {
       try { const r = await fetch("audio/" + idx.files[n].f); if (!r.ok) throw new Error(r.status); bytes += (await r.arrayBuffer()).byteLength; done++; } catch (e) { /* あとで数える */ }
-      $("m-vstat").textContent = "保存中 " + done + "/" + names.length;
+      setVStat("保存中 " + done + "/" + names.length);
     }
-    $("m-vstat").textContent = done === names.length ? "保存しました（" + done + "ファイル、約" + Math.round(bytes / 1e6) + "MB）" : "一部保存できませんでした（" + done + "/" + names.length + "）。もう一度押してください";
+    setVStat(done === names.length ? "保存しました（" + done + "ファイル、約" + Math.round(bytes / 1e6) + "MB）" : "一部保存できませんでした（" + done + "/" + names.length + "）。もう一度押してください");
   }
 
   /* ---------- 操作 ---------- */
   $("go-gps").onclick = () => { vUnlock(); startGps(); };
-  $("go-check").onclick = async () => openInfo("出発前チェック", await preflight());
+  $("go-check").onclick = openCheck;
   $("go-sim").onclick = () => { $("intro").hidden = true; $("menu").hidden = false; menuLabels(); };
   $("info-close").onclick = () => { $("info").hidden = true; };
   $("b-prev").onclick = () => { if (!S.locked) go(-1); };
@@ -715,12 +732,12 @@
   $("m-sim").onclick = () => { vUnlock(); startSim($("m-route").value, +$("m-mult").value); };
   $("m-voice").onclick = () => {
     S.voice = (S.voice + 1) % 3; vSave(); vUnlock(); menuLabels();
-    if (S.voice) { vInit().then(() => vSay(["lead:now", "town:弘前市", "lead:desu"])); } else vStop();
+    if (S.voice) { vInit().then(() => vSay(["title:now:弘前市"])); } else vStop();
   };
   $("m-vmode").onclick = () => { S.vmode = S.vmode === "mix" ? "first" : "mix"; vSave(); vSession(); menuLabels(); };
-  $("m-vdl").onclick = vDownload;
+
   $("m-simstop").onclick = () => { stopSim(); };
-  $("m-check").onclick = async () => openInfo("出発前チェック", await preflight());
+  $("m-check").onclick = openCheck;
   $("m-about").onclick = () => openInfo("出典・ライセンス", ABOUT);
   $("m-share").onclick = async () => { $("m-logstat").textContent = await shareLog(); };
   $("m-show").onclick = async () => {
