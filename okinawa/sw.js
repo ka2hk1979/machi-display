@@ -1,5 +1,5 @@
 /* まち紹介ディスプレイ 沖縄本島版 Service Worker: 端末にすべて保存して、通信なしで起動できるようにする */
-const BUILD = "2026-10-17.0847";
+const BUILD = "2026-10-17.0916";
 const CACHE = "okinawa-" + BUILD;
 const FILES = ["./", "index.html", "data.js?v=" + BUILD, "fonts/dotgothic-sub.woff2", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
