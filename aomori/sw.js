@@ -1,5 +1,5 @@
 /* まち紹介ディスプレイ 青森版 Service Worker: 端末にすべて保存して、通信なしで起動できるようにする */
-const BUILD = "2026-10-17.0915";
+const BUILD = "2026-10-19.0141";
 const CACHE = "aomori-" + BUILD;
 const FILES = ["./", "index.html", "data.js?v=" + BUILD, "fonts/dotgothic-sub.woff2", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 

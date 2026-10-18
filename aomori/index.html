@@ -61,7 +61,7 @@
 <div id="status"><span>GPS:<b id="st-gps">--</b></span><span>精度:<b id="st-acc">--</b></span><span>向き:<b id="st-dir">--</b></span><span>速度:<b id="st-spd">--</b></span><span><b id="st-note"></b></span></div>
 <div id="panel"><div id="tag" class="title"></div><div id="screen" class="title">GPSを待っています…</div><div id="pager"></div><div id="here"></div><div id="gpsWarn" hidden>GPS停止中<br>電波の届く場所で再開します</div></div>
 <div id="fb"><button data-v="へえ！">へえ！</button><button data-v="微妙">微妙</button><button data-v="寄った">寄った</button></div>
-<div id="bar"><button id="b-prev" aria-label="前">◀</button><button id="b-play" aria-label="一時停止">❚❚</button><button id="b-next" aria-label="次">▶</button><button id="b-mute" aria-label="ナビ中は声を止める">🔇</button><button id="b-lock" aria-label="ロック">🔒</button><button id="b-menu" aria-label="メニュー">⋯</button></div>
+<div id="bar"><button id="b-prev" aria-label="前">◀</button><button id="b-play" aria-label="一時停止">❚❚</button><button id="b-next" aria-label="次">▶</button><button id="b-menu" aria-label="メニュー">⋯</button></div>
 
 <div id="intro" class="overlay">
   <h1>町に入ると、<br>その町の「へえ〜」が流れます。</h1>
@@ -99,7 +99,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-10-17.0915"></script>
+<script src="data.js?v=2026-10-19.0141"></script>
 <script>
 (() => {
   "use strict";
@@ -121,7 +121,7 @@
     town: undefined, head: "", cards: [], pend: null, cand: null,
     pos: null, trail: [], heading: null, speed: null, lastFix: 0, lastAcc: null,
     alert: { ahead: null, next: null }, levels: {}, pending: {}, lastJump: 0, lastNext: 0,
-    passenger: true, showFb: false, locked: false, gpsMode: false, sim: null, wake: null, wakeOk: null,
+    passenger: true, showFb: false, gpsMode: false, sim: null, wake: null, wakeOk: null,
     logBuf: [], lastPosLog: 0, fast: false, alertShown: {}, voice: 0, vmode: "mix", titleKeys: null
   };
 
@@ -653,7 +653,6 @@
   async function vSay(keys) {
     const tok = ++VOICE.tok; vPauseAll(); VOICE.endAt = 0;
     if (!keys || !keys.length || !S.voice) return;
-    if (S.muteUntil && now() < S.muteUntil) return;   /* ナビの声を聞くために止めている間は鳴らさない(画面の表示はそのまま) */
     const idx = VOICE.idx || await vInit(); if (!idx || tok !== VOICE.tok) return;
     logEv("voice", { k: keys[keys.length > 1 && /^lead:/.test(keys[0]) ? 1 : 0] });
     const list = [];
@@ -689,7 +688,7 @@
     if (p.q) return [p.id + "/q"];
     return p.id ? [p.id] : null;
   }
-  function speakPage(p) { const keys = pageKeys(p); if (keys) { vSay(keys); if (!(S.muteUntil && now() < S.muteUntil)) VOICE.endAt = now() + vDur(keys) * 1000 + 300; } else vStop(); }
+  function speakPage(p) { const keys = pageKeys(p); if (keys) { vSay(keys); VOICE.endAt = now() + vDur(keys) * 1000 + 300; } else vStop(); }
   function qWait(p) { return S.voice >= 2 && p && p.id && VOICE.idx && VOICE.idx.clips[p.id + "/q"] ? Math.max(QUIZ_WAIT, vDur([p.id + "/q"]) * 1000 + 3500) : QUIZ_WAIT; }
   function holdMs(p) { return S.voice >= 2 && p && p.id ? Math.max(QUIZ_HOLD, vDur([p.id + "/a"]) * 1000 + 1500) : QUIZ_HOLD; }
   async function vStatus() {
@@ -714,23 +713,11 @@
   $("go-check").onclick = openCheck;
   $("go-sim").onclick = () => { $("intro").hidden = true; $("menu").hidden = false; menuLabels(); };
   $("info-close").onclick = () => { $("info").hidden = true; };
-  $("b-prev").onclick = () => { if (!S.locked) go(-1); };
-  $("b-next").onclick = () => { if (!S.locked) go(1); };
-  $("b-play").onclick = () => { if (S.locked) return; S.paused = !S.paused; $("b-play").textContent = S.paused ? "▶▶" : "❚❚"; if (S.paused) vStop(); schedule(); };
-  $("b-menu").onclick = () => { if (S.locked) return; $("menu").hidden = false; menuLabels(); };
-  /* ナビの音声と重ならないよう、同乗者が押すと30秒だけ声を止める(もう一度押すとすぐ再開) */
-  const muteBtn = $("b-mute");
-  function muteLabel() { const on = S.muteUntil && now() < S.muteUntil; muteBtn.classList.toggle("on", !!on); muteBtn.textContent = on ? "🔈" + Math.ceil((S.muteUntil - now()) / 1000) : "🔇"; }
-  muteBtn.addEventListener("click", () => { if (S.locked) return; if (S.muteUntil && now() < S.muteUntil) S.muteUntil = 0; else { S.muteUntil = now() + 30000; vStop(); } muteLabel(); });
-  setInterval(muteLabel, 500);
-  let lockTimer = null;
-  const lockBtn = $("b-lock");
-  function setLock(v) { S.locked = v; lockBtn.classList.toggle("on", v); lockBtn.textContent = v ? "🔓長押し" : "🔒"; }
-  lockBtn.addEventListener("pointerdown", () => { if (S.locked) lockTimer = setTimeout(() => setLock(false), 1200); });
-  const endLock = () => clearTimeout(lockTimer);
-  lockBtn.addEventListener("pointerup", endLock); lockBtn.addEventListener("pointercancel", endLock);
-  lockBtn.addEventListener("click", () => { if (!S.locked) setLock(true); });
-  panelEl.addEventListener("click", () => { if (!S.locked) go(1); });
+  $("b-prev").onclick = () => go(-1);
+  $("b-next").onclick = () => go(1);
+  $("b-play").onclick = () => { S.paused = !S.paused; $("b-play").textContent = S.paused ? "▶▶" : "❚❚"; if (S.paused) vStop(); schedule(); };
+  $("b-menu").onclick = () => { $("menu").hidden = false; menuLabels(); };
+  panelEl.addEventListener("click", () => go(1));
   $("m-close").onclick = () => { $("menu").hidden = true; };
   $("m-pass").onclick = () => { S.passenger = !S.passenger; menuLabels(); };
   $("m-dim").onclick = () => { document.body.classList.toggle("dim"); menuLabels(); };
