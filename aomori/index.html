@@ -99,7 +99,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-10-19.0141"></script>
+<script src="data.js?v=2026-10-19.2027"></script>
 <script>
 (() => {
   "use strict";
@@ -112,6 +112,9 @@
   const MIN_SHOW = 3000, COOLDOWN = 20000;         /* 割り込みで切り替えるまでの最短表示 / 強制ジャンプの間隔 */
   const AHEAD_LV = [15000, 10000, 5000, 2000, 1000, 500], NEXT_LV = [20000, 10000, 5000];
   const SLOW = 4.2, FAST_ON = 19.4, FAST_OFF = 15.3, ALERT_GAP = 90000;   /* 15km/h(クイズ停止) / 70km/hを超えたら高速、55km/h未満で解除 / 同じ案内ページを再び出すまでの間隔 */
+  const STOP_V = 2.8, START_QUIET = 30000;   /* 時速10km未満(停車・信号待ち)と、開始から30秒は新しい案内を出さない */
+  const NEXT_HOLD = 12000, NEXT_SLOW = 11.1, NEXT_SLOW_MAX = 5000;   /* 次の町は12秒続けて同じ候補なら採用 / 時速40km未満では5km以内だけ案内 */
+  const FIRST_CARD_GUARD = 30000;   /* 町に入ってから30秒は、その町の1枚目を「次の町」より先に見せる */
   const WINTER = [11, 12, 1, 2, 3, 4];
   const MULTS = [1, 1.5, 2], MULT_NAMES = ["表示:標準", "表示:ゆっくり", "表示:じっくり"];
   const NAMES = Object.keys(TOWNS);
@@ -121,6 +124,7 @@
     town: undefined, head: "", cards: [], pend: null, cand: null,
     pos: null, trail: [], heading: null, speed: null, lastFix: 0, lastAcc: null,
     alert: { ahead: null, next: null }, levels: {}, pending: {}, lastJump: 0, lastNext: 0,
+    nextT: null, nextCand: null, townSince: 0, startAt: 0,
     passenger: true, showFb: false, gpsMode: false, sim: null, wake: null, wakeOk: null,
     logBuf: [], lastPosLog: 0, fast: false, alertShown: {}, voice: 0, vmode: "mix", titleKeys: null
   };
@@ -331,8 +335,9 @@
     const pages = [];
     const alerts = () => { pages.push({ alert: "ahead" }); pages.push({ alert: "next" }); };
     if (S.head) pages.push({ t: S.head, title: true });
+    if (S.cards.length) pages.push(S.cards[0]);   /* 町に入ったら、まずその町の1枚目を見せてから案内に移る */
     alerts();
-    S.cards.forEach((c, i) => { pages.push(c); if ((i + 1) % 3 === 0 && i + 1 < S.cards.length) alerts(); });
+    S.cards.slice(1).forEach((c, i) => { pages.push(c); if ((i + 2) % 3 === 0 && i + 2 < S.cards.length) alerts(); });
     S.pages = pages;
     if (S.idx >= pages.length) S.idx = 0;
   }
@@ -353,7 +358,8 @@
     return { cards: [...fresh, ...old], visits };
   }
   function enterTown(name, first) {
-    S.town = name; S.levels = {}; S.alert.next = null; setHere("ここは" + name);
+    S.town = name; S.alert.next = null; S.nextT = null; S.nextCand = null; S.townSince = now(); setHere("ここは" + name);
+    for (const k of Object.keys(S.levels)) if (k.startsWith("next:")) delete S.levels[k];   /* 名所の案内済みは残す(町が変わっても同じ名所をくり返さない) */
     const { cards } = cardsFor(name);
     S.cards = cards; S.head = first ? "いまは\n" + TOWNS[name].pref + "\n" + name : TOWNS[name].pref + "\n" + name + "\nに入りました";
     S.titleKeys = [(first ? "title:now:" : "title:in:") + name];
@@ -400,16 +406,20 @@
     return true;
   }
   const PRIO = { ahead: 1, next: 2 };
+  const canAnnounce = () => (S.speed == null || S.speed >= STOP_V) && now() - S.startAt >= START_QUIET;
+  const firstCardGuard = () => now() - S.townSince < FIRST_CARD_GUARD && S.idx <= 1;
   function requestInterrupt(kind, key, lv) {
     const k = kind + ":" + key;
     if (!S.pending[k] || S.pending[k].lv < lv) { S.pending[k] = { kind, key, lv, exp: now() + 120000 }; logEv("irq", { kind, key, lv }); }
     tickPending();
   }
   function tickPending() {
+    if (!canAnnounce()) return;   /* 止まっている間は待たせておき、走り出してから出す */
     const t = now(); let best = null;
     for (const k of Object.keys(S.pending)) {
       const p = S.pending[k];
       if (p.exp < t || !S.alert[p.kind]) { delete S.pending[k]; continue; }
+      if (p.kind === "next" && firstCardGuard()) continue;
       if (!best || PRIO[p.kind] < PRIO[best.kind]) best = p;
     }
     if (!best) return;
@@ -451,7 +461,7 @@
     if (winter && ((a.type === "名所" && it.season === "冬季閉鎖") || it.winter)) body += "\n※冬は閉鎖・通行止めの可能性あり";
     S.alert.ahead = { tag: a.type, hook: it.name, body, foot: b ? "その先：" + b.it.name + " " + fmtDist(b.eff) : "", vk: (a.type === "道の駅" ? "e:" : "s:") + it.id, vlead: leadAhead(a.eff) };
     const lv = AHEAD_LV.filter((t) => a.eff <= t).length;
-    if (lv > (S.levels["ahead:" + it.id] || 0)) requestInterrupt("ahead", it.id, lv);
+    if (lv > (S.levels["ahead:" + it.id] || 0) && canAnnounce()) requestInterrupt("ahead", it.id, lv);
     else if (S.pages[S.idx] && S.pages[S.idx].alert === "ahead") render();
   }
   /* ---------- 次の町の予告(進行方向に500mおきに境界を調べる) ---------- */
@@ -464,11 +474,17 @@
       const p = dest(here, S.heading, d), t = townAt(p, 0);
       if (t && t !== S.town) { found = { t, d }; break; }
     }
-    if (!found || found.d > 20000) { S.alert.next = null; return; }   /* 次の町は20km以内になってから案内する */
+    const maxD = S.speed != null && S.speed < NEXT_SLOW ? NEXT_SLOW_MAX : 20000;   /* 次の町は20km以内(街なかの低速では5km以内)になってから案内する */
+    if (!found || found.d > maxD) { S.alert.next = null; S.nextCand = null; return; }
+    if (found.t !== S.nextT) {   /* 曲がるたびに次の町が変わらないよう、新しい候補は少し続いてから採用する */
+      if (!S.nextCand || S.nextCand.t !== found.t) S.nextCand = { t: found.t, since: now() };
+      if (now() - S.nextCand.since < NEXT_HOLD) { S.alert.next = null; return; }
+      S.nextT = found.t; S.nextCand = null;
+    }
     const tz = TOWNS[found.t].cards.find((c) => c.teaser) || TOWNS[found.t].cards.find((c) => c.hook);
     S.alert.next = { tag: "次の町", hook: found.t, body: "あと" + fmtDist(found.d) + fmtEta(found.d), foot: tz ? "見どころ：" + (tz.hook || tz.q) : "", vk: [nextKey(found.d, found.t)] };
     const lv = NEXT_LV.filter((t) => found.d <= t).length;
-    if (lv > (S.levels["next:" + found.t] || 0)) requestInterrupt("next", found.t, lv);
+    if (lv > (S.levels["next:" + found.t] || 0) && canAnnounce()) requestInterrupt("next", found.t, lv);
     else if (S.pages[S.idx] && S.pages[S.idx].alert === "next") render();
   }
 
@@ -500,7 +516,7 @@
   function onErr(e) { setStatus("st-gps", e.code === 1 ? "許可なし" : "探索中", "warn"); logEv("gps-err", { code: e.code }); }
   let wId = null;
   function startGps() {
-    hideAll(); keepAwake(); S.gpsMode = true; S.lastFix = now(); document.body.classList.add("drive");
+    hideAll(); keepAwake(); S.gpsMode = true; S.lastFix = now(); S.startAt = now(); document.body.classList.add("drive");
     if (!navigator.geolocation) { setStatus("st-gps", "非対応", "warn"); showMsg("このブラウザは位置情報に対応していません。"); return; }
     showMsg("GPSを\n待っています…");
     wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
@@ -529,7 +545,7 @@
   function startSim(route, mult, noisy) {
     stopSim(); hideAll(); keepAwake(); document.body.classList.remove("drive");
     const path = routePath(route); let s = 0, t = 0, stopUntil = -1, gapUntil = -1; seed = 7;
-    S.sim = { route, mult: mult || 1 }; S.town = undefined; S.speed = null; S.heading = null; S.trail = [];
+    S.sim = { route, mult: mult || 1 }; S.town = undefined; S.speed = null; S.heading = null; S.trail = []; S.startAt = now();
     showMsg(route + "\n出発します");
     S.sim.timer = setInterval(() => {
       t += 1;
