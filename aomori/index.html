@@ -99,7 +99,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-10-19.2300"></script>
+<script src="data.js?v=2026-11-08.2130"></script>
 <script>
 (() => {
   "use strict";
@@ -161,6 +161,11 @@
   }
 
   /* ---------- 町の境界 ---------- */
+  if (!GEO.polys && GEO.topo) {   /* 境界は共有線(アーク)の形で届く。町ごとの多角形に組み立てる(番号が負 ~i なら i番の線を逆向きにたどる) */
+    const A = GEO.topo.arcs;
+    const ring = (idx) => { const r = []; for (const a of idx) { const s = a >= 0 ? A[a] : A[~a].slice().reverse(); for (let i = r.length ? 1 : 0; i < s.length; i++) r.push(s[i]); } return r; };
+    GEO.polys = {}; for (const n of Object.keys(GEO.topo.towns)) GEO.polys[n] = GEO.topo.towns[n].map((p) => p.map(ring));
+  }
   const POLY = {};   /* 町名 -> {bbox, polys:[[ring,...]]} */
   for (const n of NAMES) {
     const polys = GEO.polys[n]; let x0 = 999, x1 = -999, y0 = 999, y1 = -999;
@@ -186,10 +191,9 @@
     }
     return false;
   }
-  function edgeDist(n, here) {   /* 町の境界線までの最短距離(m)。近似の平面計算 */
+  function edgeDist(n, here) {   /* 町の境界線(穴の線もふくむ)までの最短距離(m)。近似の平面計算 */
     const kx = Math.cos(here.lat * RAD) * 111320, ky = 110540; let best = 1e9;
-    for (const p of POLY[n].polys) {
-      const ring = p[0];
+    for (const p of POLY[n].polys) for (const ring of p) {
       for (let i = 0; i < ring.length - 1; i++) {
         const ax = (ring[i][0] - here.lon) * kx, ay = (ring[i][1] - here.lat) * ky, bx = (ring[i + 1][0] - here.lon) * kx, by = (ring[i + 1][1] - here.lat) * ky;
         const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
@@ -381,16 +385,30 @@
     if (!S.pend) return;
     if (!S.pages.length || canInterrupt(false)) applyTown();
   }
-  /* 町の切り替え判定: 最初は即時。以後は候補が5秒以上続き、かつ150m以上進むまで確定しない(境界での行き来を防ぐ)。精度の悪い測位は使わない。
+  /* 町の切り替え判定: 最初は即時。以後は「前の町の境界から十分に外へ出たか」で決める。
+     前の町の境界から max(40m, GPSの精度) 以上離れた測位が2回続いたら切り替える。境界のずれ(簡略化・GPS誤差)は
+     ほとんど40m以内なので、境界ぎわでは前の町のままにして、境界沿いの道で町が行ったり来たりするのを防ぐ。
+     前の町が無い(海上・県外)ときは、新しい町の境界から内側への距離で同じように決める。
+     切り替えてから30秒は、200m以上入らない限り次の切り替えをしない(境界を細かくまたぐ道で、町名がめまぐるしく変わらないように)。
+     どの町にも入らない(海上・県外へ出た)ときは、10秒・250m続いてから。精度の悪い測位(100m超)は使わない。
      確定しても、読みかけのカードがあれば少し待ってから切り替える */
+  const SWITCH_DEPTH = 40, SWITCH_HITS = 2, SWITCH_GAP = 30000, SWITCH_GAP_DEEP = 200, SWITCH_LATE = 60000, SWITCH_LATE_M = 500;
   function townState(here, acc) {
     if (acc != null && acc > 100) return;
     const t = townAt(here, 80);
     if (S.town === undefined) { S.pend = { t }; applyTown(); return; }
     if (t === S.town) { S.cand = null; S.pend = null; return; }
-    if (!S.cand || S.cand.town !== t) { S.cand = { town: t, since: now(), pos: here }; return; }
-    const need = t === null ? 10000 : 5000, far = t === null ? 250 : 150;
-    if (now() - S.cand.since >= need && dist(S.cand.pos, here) >= far) { S.pend = { t }; S.cand = null; tickPendingTown(); }
+    if (!S.cand || S.cand.town !== t) S.cand = { town: t, since: now(), pos: here, hits: 0 };
+    let ok;
+    if (t === null) ok = now() - S.cand.since >= 10000 && dist(S.cand.pos, here) >= 250;
+    else {
+      const depth = S.town ? edgeDist(S.town, here) : edgeDist(t, here);
+      S.cand.hits = depth >= Math.max(SWITCH_DEPTH, acc || 0) ? S.cand.hits + 1 : 0;
+      ok = S.cand.hits >= SWITCH_HITS && (now() - (S.switchAt || 0) >= SWITCH_GAP || depth >= SWITCH_GAP_DEEP);
+      /* 念のため: 境界のすぐ近くを1分・500m以上走り続けたときも切り替える */
+      if (now() - S.cand.since >= SWITCH_LATE && dist(S.cand.pos, here) >= SWITCH_LATE_M) ok = true;
+    }
+    if (ok) { S.pend = { t }; S.cand = null; S.switchAt = now(); tickPendingTown(); }
   }
 
   /* ---------- 割り込みの調停 ---------- */
@@ -464,16 +482,39 @@
     if (lv > (S.levels["ahead:" + it.id] || 0) && canAnnounce()) requestInterrupt("ahead", it.id, lv);
     else if (S.pages[S.idx] && S.pages[S.idx].alert === "ahead") render();
   }
-  /* ---------- 次の町の予告(進行方向に500mおきに境界を調べる) ---------- */
+  /* ---------- 次の町の予告(進行方向の線と、町の境界線の交点を直接求める) ---------- */
+  const NEXT_MIN_IN = 300;   /* 町の端を300m未満かすめるだけなら、次の町にしない */
+  function rayTown(here, brg, reach) {
+    const kx = Math.cos(here.lat * RAD) * 111320, ky = 110540;
+    const ex = Math.sin(brg * RAD) * reach, ey = Math.cos(brg * RAD) * reach;   /* 進行方向の線: 今の位置を原点に、reach m先まで(メートル座標) */
+    const lon1 = here.lon + ex / kx, lat1 = here.lat + ey / ky;
+    const bx0 = Math.min(here.lon, lon1), bx1 = Math.max(here.lon, lon1), by0 = Math.min(here.lat, lat1), by1 = Math.max(here.lat, lat1);
+    let best = null;
+    for (const n of NAMES) {
+      if (n === S.town) continue;
+      const b = POLY[n].bbox; if (b[2] < bx0 || b[0] > bx1 || b[3] < by0 || b[1] > by1) continue;
+      const ts = [];
+      for (const p of POLY[n].polys) for (const ring of p) for (let i = 0; i < ring.length - 1; i++) {
+        const ax = (ring[i][0] - here.lon) * kx, ay = (ring[i][1] - here.lat) * ky, dx = (ring[i + 1][0] - here.lon) * kx - ax, dy = (ring[i + 1][1] - here.lat) * ky - ay;
+        const den = ex * dy - ey * dx; if (!den) continue;
+        const s = (ax * dy - ay * dx) / den, u = (ax * ey - ay * ex) / den;   /* s: 進行方向の線の上の位置(0〜1)、u: 境界の辺の上の位置(0〜1) */
+        if (s > 0 && s <= 1 && u >= 0 && u < 1) ts.push(s * reach);
+      }
+      if (!ts.length) continue;
+      ts.sort((a, c) => a - c);
+      /* 入る点と出る点を組にして、300m以上通る最初の区間を探す(すでにその町の中なら、最初の交点は出る点なので飛ばす) */
+      for (let k = inTown(n, here.lon, here.lat, 0) ? 1 : 0; k < ts.length; k += 2) {
+        const out = k + 1 < ts.length ? ts[k + 1] : reach + NEXT_MIN_IN;
+        if (out - ts[k] >= NEXT_MIN_IN) { if (!best || ts[k] < best.d) best = { t: n, d: Math.round(ts[k]) }; break; }
+      }
+    }
+    return best;
+  }
   function checkNext(here) {
     if (S.heading == null || now() - S.lastNext < 2000) return;
     S.lastNext = now();
     const reach = S.speed != null && S.speed > 3 ? Math.max(10000, Math.min(30000, S.speed * 240)) : 30000;
-    let found = null;
-    for (let d = 500; d <= reach; d += 500) {
-      const p = dest(here, S.heading, d), t = townAt(p, 0);
-      if (t && t !== S.town) { found = { t, d }; break; }
-    }
+    const found = rayTown(here, S.heading, reach);
     const maxD = S.speed != null && S.speed < NEXT_SLOW ? NEXT_SLOW_MAX : 20000;   /* 次の町は20km以内(街なかの低速では5km以内)になってから案内する */
     if (!found || found.d > maxD) { S.alert.next = null; S.nextCand = null; return; }
     if (found.t !== S.nextT) {   /* 曲がるたびに次の町が変わらないよう、新しい候補は少し続いてから採用する */
@@ -581,7 +622,7 @@
     try { const v = await vStatus(); add(v.total && v.have === v.total ? true : null, v.total ? "音声データ（任意）: " + v.have + "/" + v.total + "保存済み" : "音声データ（任意）: 未取得"); } catch (e) { /* 無視 */ }
     add(null, "省電力モードはオフに、給電しながら使ってください");
     add(null, "ホーム画面に追加したあとは、そのアイコンをWi-Fiで一度開いてから機内モードで確認してください");
-    return "<ul class='chk'>" + rows.join("") + "</ul><h2>音声データ（音声を使う場合）</h2><div class='row'><button id='pf-vdl' class='main'>音声データを保存（約25MB・Wi-Fiで）</button></div><p id='pf-vstat'></p><p>データ版: " + BUILD + "</p>";
+    return "<ul class='chk'>" + rows.join("") + "</ul><h2>音声データ（音声を使う場合）</h2><div class='row'><button id='pf-vdl' class='main'>音声データを保存（約35MB・Wi-Fiで）</button></div><p id='pf-vstat'></p><p>データ版: " + BUILD + "</p>";
   }
   function hideAll() { for (const id of ["intro", "menu", "info"]) $(id).hidden = true; }
   async function openCheck() {   /* 出発前チェック。音声データの保存もここから */
