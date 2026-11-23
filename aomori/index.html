@@ -99,7 +99,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-11-08.2130"></script>
+<script src="data.js?v=2026-11-23.1519"></script>
 <script>
 (() => {
   "use strict";
@@ -330,9 +330,12 @@
   }
   function advance() {
     if (S.pend) { applyTown(); return; }
-    if (S.pages.length > 1) { step(1); showPage(S.idx, "auto"); } else schedule();
+    if (S.pages.length > 1) {
+      if (S.resume != null && S.resume < S.pages.length) S.idx = S.resume;   /* 割り込みの案内のあとは、読んでいたカードの続きから(先頭へ戻ると同じカードばかりになる) */
+      S.resume = null; step(1); showPage(S.idx, "auto");
+    } else schedule();
   }
-  function go(delta) { if (!S.pages.length) return; step(delta); showPage(S.idx, "manual"); }
+  function go(delta) { if (!S.pages.length) return; S.resume = null; step(delta); showPage(S.idx, "manual"); }
 
   /* ---------- ページ構成 ---------- */
   function build() {
@@ -345,7 +348,7 @@
     S.pages = pages;
     if (S.idx >= pages.length) S.idx = 0;
   }
-  function setPagesFresh() { S.idx = 0; S.revealed = false; S.pageSince = now(); build(); showPage(0, "town"); }
+  function setPagesFresh() { S.resume = null; S.idx = 0; S.revealed = false; S.pageSince = now(); build(); showPage(0, "town"); }
 
   /* ---------- 町に入る ---------- */
   function cardsFor(name) {
@@ -446,7 +449,7 @@
     const same = S.pages[S.idx] && S.pages[S.idx].alert === best.kind;
     delete S.pending[best.kind + ":" + best.key];
     S.levels[best.kind + ":" + best.key] = best.lv; S.lastJump = now();
-    if (same) { render(); schedule(); } else if (i >= 0) showPage(i, best.kind + "-jump");
+    if (same) { render(); schedule(); } else if (i >= 0) { if (!S.pages[S.idx].alert) S.resume = S.idx; showPage(i, best.kind + "-jump"); }
   }
   setInterval(() => {
     tickPending(); tickPendingTown();
@@ -563,7 +566,7 @@
     wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
     setInterval(() => { if (S.gpsMode && now() - S.lastFix > 30000) { try { navigator.geolocation.clearWatch(wId); } catch (e) { /* 無視 */ } wId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }); S.lastFix = now(); logEv("gps-restart"); } }, 10000);
   }
-  function showMsg(t) { setHere(""); S.titleKeys = null; S.head = t; S.cards = []; S.town = undefined; S.pend = null; S.cand = null; S.idx = 0; build(); showPage(0, "msg"); }
+  function showMsg(t) { setHere(""); S.titleKeys = null; S.head = t; S.cards = []; S.town = undefined; S.pend = null; S.cand = null; S.idx = 0; S.resume = null; build(); showPage(0, "msg"); }
   async function keepAwake() {
     try { if ("wakeLock" in navigator) { S.wake = await navigator.wakeLock.request("screen"); S.wakeOk = true; S.wake.addEventListener("release", () => { S.wakeOk = false; }); } else S.wakeOk = false; }
     catch (e) { S.wakeOk = false; }
@@ -783,7 +786,7 @@
   $("m-sim").onclick = () => { vUnlock(); startSim($("m-route").value, +$("m-mult").value); };
   $("m-voice").onclick = () => {
     S.voice = (S.voice + 1) % 3; vSave(); vUnlock(); menuLabels();
-    if (S.voice) { vInit().then(() => vSay(["title:now:弘前市"])); } else vStop();
+    if (S.voice) { vInit().then(() => vSay([S.town ? "title:now:" + S.town : S.town === null ? "lead:kengai" : "title:now:弘前市"])); } else vStop();
   };
   $("m-vmode").onclick = () => { S.vmode = S.vmode === "mix" ? "first" : "mix"; vSave(); vSession(); menuLabels(); };
 
