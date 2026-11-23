@@ -81,10 +81,9 @@
   <h2>表示</h2>
   <div class="row"><button id="m-pass"></button><button id="m-dim"></button></div>
   <div class="row"><button id="m-speed"></button><button id="m-fb"></button></div>
-  <!-- 音声はまだ無い(音声を作ったら下の3行の hidden を外す) -->
-  <h2 hidden>音声（VOICEVOX:冥鳴ひまり）</h2>
-  <div class="row" hidden><button id="m-voice"></button><button id="m-vmode"></button></div>
-  <p id="m-vstat" hidden></p>
+  <h2>音声（VOICEVOX:冥鳴ひまり）</h2>
+  <div class="row"><button id="m-voice"></button><button id="m-vmode"></button></div>
+  <p id="m-vstat"></p>
   <h2>走行シミュレーション</h2>
   <div class="row"><select id="m-route"></select><select id="m-mult"><option value="1">等倍</option><option value="5">5倍</option><option value="20">20倍</option></select></div>
   <div class="row"><button id="m-sim">シミュレーション開始</button><button id="m-simstop">止める</button></div>
@@ -100,7 +99,7 @@
 <div id="info" class="overlay" hidden><h1 id="info-title"></h1><div id="info-body"></div><div class="row"><button class="main" id="info-close">閉じる</button></div></div>
 
 <pre id="logdump" hidden></pre>
-<script src="data.js?v=2026-11-23.1912"></script>
+<script src="data.js?v=2026-11-23.2203"></script>
 <script>
 (() => {
   "use strict";
@@ -376,7 +375,7 @@
   }
   function enterNone() {
     S.town = null; S.levels = {}; setHere("新潟県外・沖合");
-    S.cards = GEO.pool.map((c) => ({ ...c, id: "pool#" + hash(c.hook + c.t) })).sort(() => Math.random() - 0.5).slice(0, 4);
+    S.cards = GEO.pool.map((c) => ({ ...c, id: "pool#" + hash((c.hook || "") + (c.t || "") + (c.q || "") + (c.a || "")) })).sort(() => Math.random() - 0.5).slice(0, 4);
     S.head = "いま\n新潟県外・沖合"; S.titleKeys = ["lead:kengai"]; logEv("town", { town: null });
     setPagesFresh();
   }
@@ -623,9 +622,10 @@
     try { const r = await navigator.permissions.query({ name: "geolocation" }); add(r.state === "granted" ? true : r.state === "denied" ? false : null, "位置情報の許可: " + r.state); } catch (e) { add(null, "位置情報の許可は走行開始時に確認されます"); }
     add(S.lastAcc != null ? S.lastAcc <= 100 : null, S.lastAcc != null ? "現在地の精度 " + Math.round(S.lastAcc) + "m" : "現在地の精度: 未測定（スタート後に表示）");
     add(S.wakeOk === true ? true : null, S.wakeOk === true ? "画面常時ON" : "画面常時ON: 走行開始後に確認されます");
+    try { const v = await vStatus(); add(v.total && v.have === v.total ? true : null, v.total ? "音声データ（任意）: " + v.have + "/" + v.total + "保存済み" : "音声データ（任意）: 未取得"); } catch (e) { /* 無視 */ }
     add(null, "省電力モードはオフに、給電しながら使ってください");
     add(null, "ホーム画面に追加したあとは、そのアイコンをWi-Fiで一度開いてから機内モードで確認してください");
-    return "<ul class='chk'>" + rows.join("") + "</ul><p>データ版: " + BUILD + "</p>";   /* 音声はまだ無いので、音声データの保存ボタンは出さない */
+    return "<ul class='chk'>" + rows.join("") + "</ul><h2>音声データ（音声を使う場合）</h2><div class='row'><button id='pf-vdl' class='main'>音声データを保存（約36MB・Wi-Fiで）</button></div><p id='pf-vstat'></p><p>データ版: " + BUILD + "</p>";
   }
   function hideAll() { for (const id of ["intro", "menu", "info"]) $(id).hidden = true; }
   async function openCheck() {   /* 出発前チェック。音声データの保存もここから */
@@ -644,7 +644,7 @@
     $("m-build").textContent = "ビルド " + BUILD;
     readLog().then((l) => { $("m-logstat").textContent = "保存済みの記録: " + l.length + "件"; });
   }
-  const ABOUT = "<p>町の紹介文: Wikipedia（日本語版）の記事を要約・引用 CC BY-SA 4.0（記事名と版ID・取得日は data に記録）</p><p>道の駅・名所の位置: © OpenStreetMap contributors (ODbL)、Wikidata (CC0)</p><p>町の境界: 国土数値情報（行政区域データ、国土交通省）を加工して作成</p><p>名物・名所の補足: Web上の観光情報（出典URLは sights.json に記録）</p><p>フォント: DotGothic16 (SIL Open Font License 1.1)</p>";
+  const ABOUT = "<p>町の紹介文: Wikipedia（日本語版）の記事を要約・引用 CC BY-SA 4.0（記事名と版ID・取得日は data に記録）</p><p>道の駅・名所の位置: © OpenStreetMap contributors (ODbL)、Wikidata (CC0)</p><p>町の境界: 国土数値情報（行政区域データ、国土交通省）を加工して作成</p><p>名物・名所の補足: Web上の観光情報（出典URLは sights.json に記録）</p><p>フォント: DotGothic16 (SIL Open Font License 1.1)</p><p>音声: VOICEVOX:冥鳴ひまり（VOICEVOXで作成した音声ファイルを同梱）</p>";
   async function shareLog() {
     const l = await readLog(); const text = JSON.stringify({ build: BUILD, ua: navigator.userAgent, events: l });
     try {
